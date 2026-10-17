@@ -214,7 +214,8 @@ class PlayerConnection(context: Context, private val client: SubsonicClient) {
                 .setArtist(artist)
                 .setAlbumTitle(album)
                 .setArtworkUri(client.coverArtUrl(coverArt, 600)?.toUri())
-                .setDurationMs(duration * 1000L)
+                // Unbekannte Länge (0) nicht vorgeben, sonst überdeckt sie die echte Länge aus der Datei.
+                .setDurationMs(if (duration > 0) duration * 1000L else null)
                 .setIsPlayable(true)
                 .setIsBrowsable(false)
                 .setExtras(Bundle().apply {

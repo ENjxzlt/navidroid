@@ -499,7 +499,10 @@ fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boo
             )
             Text(song.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Text(formatDuration(song.duration), style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+        // Länge 0 heißt: Navidrome konnte die Datei nicht auslesen – dann lieber nichts anzeigen.
+        if (song.duration > 0) {
+            Text(formatDuration(song.duration), style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+        }
         Box {
             IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "Optionen", tint = Navi.Muted) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
