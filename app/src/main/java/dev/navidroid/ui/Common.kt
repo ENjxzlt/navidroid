@@ -1,39 +1,46 @@
 package dev.navidroid.ui
 
+import android.graphics.drawable.BitmapDrawable
 import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,22 +53,34 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.ColorUtils
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import androidx.palette.graphics.Palette
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.request.ImageRequest
 import dev.navidroid.NaviApp
 import dev.navidroid.data.Album
 import dev.navidroid.data.Song
 import dev.navidroid.playback.PlayerConnection
+import dev.navidroid.ui.theme.Navi
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 val LocalPlayer = staticCompositionLocalOf<PlayerConnection> { error("Kein PlayerConnection bereitgestellt") }
 
@@ -74,6 +93,7 @@ object Routes {
     const val ARTIST = "artist/{id}"
     const val PLAYLIST = "playlist/{id}"
     const val PLAYER = "player"
+    const val LYRICS = "lyrics"
 }
 
 fun NavController.openAlbum(id: String) = navigate("album/$id")
@@ -129,7 +149,9 @@ fun <T> LoadContent(loader: Loader<T>, content: @Composable (T) -> Unit) {
 
 @Composable
 fun CenteredProgress(modifier: Modifier = Modifier.fillMaxSize()) {
-    Box(modifier, contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+    Box(modifier, contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary, strokeWidth = 3.dp)
+    }
 }
 
 @Composable
@@ -148,25 +170,188 @@ fun ErrorView(message: String, onRetry: () -> Unit) {
 @Composable
 fun EmptyHint(text: String) {
     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        Text(text, color = Navi.Muted, textAlign = TextAlign.Center)
     }
 }
 
+// ---- Covertönung ----
+
+/** Dunkle, aus dem Cover gewonnene Hintergrundfarbe, auf der weißer Text gut lesbar bleibt. */
+@Composable
+fun rememberCoverTint(model: Any?, fallback: Color = Navi.Surface): Color {
+    val context = LocalContext.current
+    var color by remember(model) { mutableStateOf<Color?>(null) }
+    LaunchedEffect(model) {
+        if (model == null) return@LaunchedEffect
+        val request = ImageRequest.Builder(context).data(model).size(96).allowHardware(false).build()
+        val bitmap = (context.imageLoader.execute(request).drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
+        val palette = withContext(Dispatchers.Default) { Palette.from(bitmap).generate() }
+        val swatch = palette.vibrantSwatch ?: palette.dominantSwatch ?: palette.mutedSwatch ?: return@LaunchedEffect
+        val hsl = FloatArray(3)
+        ColorUtils.colorToHSL(swatch.rgb, hsl)
+        hsl[1] = hsl[1].coerceAtMost(0.55f)
+        hsl[2] = 0.13f
+        color = Color(ColorUtils.HSLToColor(hsl))
+    }
+    return animateColorAsState(color ?: fallback, tween(500), label = "coverTint").value
+}
+
+/** Gedämpfte Textfarbe passend zur Tönung (hell, leicht eingefärbt). */
+fun mutedOn(tint: Color): Color = Color(ColorUtils.blendARGB(Color.White.toArgb(), tint.toArgb(), 0.28f))
+
 // ---- Bausteine ----
+
+@Composable
+fun ScreenTitle(title: String, modifier: Modifier = Modifier, actions: @Composable () -> Unit = {}) {
+    Row(
+        modifier.fillMaxWidth().statusBarsPadding().padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+        actions()
+    }
+}
+
+@Composable
+fun RoundIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    container: Color = Navi.Surface2,
+    tint: Color = Navi.Text,
+    size: Int = 44,
+) {
+    Surface(onClick = onClick, shape = CircleShape, color = container, modifier = Modifier.size(size.dp)) {
+        Box(contentAlignment = Alignment.Center) { Icon(icon, description, tint = tint) }
+    }
+}
+
+@Composable
+fun PillChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        border = if (selected) null else BorderStroke(1.dp, Navi.Outline),
+        modifier = Modifier.height(36.dp),
+    ) {
+        Box(Modifier.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold),
+                color = if (selected) Navi.OnAccent else Color(0xFFD5D8DE),
+            )
+        }
+    }
+}
+
+@Composable
+fun <T> ChipRow(options: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit, modifier: Modifier = Modifier) {
+    LazyRow(
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(options) { (key, label) -> PillChip(label, key == selected) { onSelect(key) } }
+    }
+}
+
+@Composable
+fun <T> SegmentedControl(
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    badge: (T) -> Int = { 0 },
+) {
+    Row(
+        modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Navi.Surface).padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        options.forEach { (key, label) ->
+            val active = key == selected
+            Surface(
+                onClick = { onSelect(key) },
+                shape = RoundedCornerShape(10.dp),
+                color = if (active) Navi.Outline else Color.Transparent,
+                modifier = Modifier.weight(1f).height(40.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold),
+                        color = if (active) Navi.Text else Navi.Muted,
+                    )
+                    val count = badge(key)
+                    if (count > 0) {
+                        Spacer(Modifier.width(6.dp))
+                        Box(
+                            Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).padding(horizontal = 6.dp, vertical = 1.dp),
+                        ) {
+                            Text("$count", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = MaterialTheme.typography.labelMedium.letterSpacing), color = Navi.OnAccent)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    Row(
+        modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(14.dp)).background(Navi.Surface).padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Rounded.Search, null, tint = Navi.Muted, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.weight(1f)) {
+            if (value.isEmpty()) Text(placeholder, color = Navi.Muted, style = MaterialTheme.typography.bodyLarge)
+            if (enabled) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = Navi.Text),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        if (value.isNotEmpty() && enabled) {
+            IconButton(onClick = { onValueChange("") }) { Icon(Icons.Rounded.Close, "Leeren", tint = Navi.Muted) }
+        }
+    }
+}
+
+@Composable
+fun SectionHeader(title: String, modifier: Modifier = Modifier, action: (@Composable () -> Unit)? = null) {
+    Row(modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+        action?.invoke()
+    }
+}
 
 @Composable
 fun CoverArt(id: String?, size: Int, modifier: Modifier = Modifier) {
     val app = LocalContext.current.applicationContext as NaviApp
     val url = remember(id, size) { app.client.coverArtUrl(id, size) }
-    Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-        Icon(
-            Icons.Filled.MusicNote,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-        )
-        if (url != null) {
+    CoverImage(url, modifier)
+}
+
+@Composable
+fun CoverImage(model: Any?, modifier: Modifier = Modifier) {
+    Box(modifier.background(Navi.Surface2), contentAlignment = Alignment.Center) {
+        Icon(Icons.Rounded.MusicNote, null, tint = Navi.Muted.copy(alpha = 0.4f))
+        if (model != null) {
             AsyncImage(
-                model = url,
+                model = model,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.matchParentSize(),
@@ -178,141 +363,90 @@ fun CoverArt(id: String?, size: Int, modifier: Modifier = Modifier) {
 @Composable
 fun AlbumCard(album: Album, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Column(
-        modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(4.dp)
+        modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        CoverArt(album.coverArt, 300, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)))
-        Text(
-            album.name,
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 6.dp),
-        )
-        Text(
-            album.artist.orEmpty(),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boolean = false) {
-    val player = LocalPlayer.current
-    val context = LocalContext.current
-    var menu by remember { mutableStateOf(false) }
-    val leading: (@Composable () -> Unit)? = when {
-        showCover -> {
-            { CoverArt(song.coverArt, 300, Modifier.size(48.dp).clip(RoundedCornerShape(6.dp))) }
-        }
-        number != null -> {
-            {
-                Text(
-                    "$number",
-                    modifier = Modifier.width(28.dp),
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        else -> null
-    }
-    ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
-        leadingContent = leading,
-        headlineContent = { Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        supportingContent = {
+        CoverArt(album.coverArt, 300, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(14.dp)))
+        Column(Modifier.padding(bottom = 4.dp)) {
+            Text(album.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                listOfNotNull(song.artist, formatDuration(song.duration)).joinToString(" · "),
+                album.artist.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                color = Navi.Muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        },
-        trailingContent = {
-            Box {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Optionen") }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Als Nächstes abspielen") },
-                        onClick = {
-                            player.playNext(listOf(song))
-                            menu = false
-                            Toast.makeText(context, "Wird als Nächstes gespielt", Toast.LENGTH_SHORT).show()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Zur Warteschlange hinzufügen") },
-                        onClick = {
-                            player.enqueue(listOf(song))
-                            menu = false
-                            Toast.makeText(context, "Zur Warteschlange hinzugefügt", Toast.LENGTH_SHORT).show()
-                        },
-                    )
-                }
-            }
-        },
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DetailScaffold(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück") }
-                },
-            )
-        },
-    ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) { content() }
+        }
     }
 }
 
+/**
+ * Titelzeile im Stil des Redesigns: Nummer oder Cover, Titel/Künstler, Dauer, Menü.
+ * Der gerade laufende Titel wird in der Akzentfarbe hervorgehoben.
+ */
 @Composable
-fun DetailHeader(
-    coverArt: String?,
-    title: String,
-    subtitle: String?,
-    meta: String,
-    onPlay: () -> Unit,
-    onShuffle: () -> Unit,
-    onSubtitleClick: (() -> Unit)? = null,
-) {
-    Column(
-        Modifier.fillMaxWidth().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boolean = false) {
+    val player = LocalPlayer.current
+    val playerState by player.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val current = playerState.mediaId == song.id
+    val accent = MaterialTheme.colorScheme.primary
+    var menu by remember { mutableStateOf(false) }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (current) Navi.Surface else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        CoverArt(coverArt, 600, Modifier.fillMaxWidth(0.65f).aspectRatio(1f).clip(RoundedCornerShape(12.dp)))
-        Spacer(Modifier.size(16.dp))
-        Text(title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
-        if (!subtitle.isNullOrEmpty()) {
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = if (onSubtitleClick != null) Modifier.clickable(onClick = onSubtitleClick) else Modifier,
+        when {
+            showCover -> CoverArt(song.coverArt, 300, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)))
+            current -> Box(Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.GraphicEq, "Läuft gerade", tint = accent, modifier = Modifier.size(18.dp))
+            }
+            number != null -> Text(
+                "$number",
+                modifier = Modifier.width(24.dp),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = Navi.Faint,
             )
         }
-        Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.size(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onPlay) {
-                Icon(Icons.Filled.PlayArrow, null)
-                Spacer(Modifier.size(6.dp))
-                Text("Abspielen")
-            }
-            OutlinedButton(onClick = onShuffle) {
-                Icon(Icons.Filled.Shuffle, null)
-                Spacer(Modifier.size(6.dp))
-                Text("Zufällig")
+        Column(Modifier.weight(1f)) {
+            Text(
+                song.title,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = if (current) accent else Navi.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(song.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Text(formatDuration(song.duration), style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+        Box {
+            IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreVert, "Optionen", tint = Navi.Muted) }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(
+                    text = { Text("Als Nächstes abspielen") },
+                    onClick = {
+                        player.playNext(listOf(song))
+                        menu = false
+                        Toast.makeText(context, "Wird als Nächstes gespielt", Toast.LENGTH_SHORT).show()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Zur Warteschlange hinzufügen") },
+                    onClick = {
+                        player.enqueue(listOf(song))
+                        menu = false
+                        Toast.makeText(context, "Zur Warteschlange hinzugefügt", Toast.LENGTH_SHORT).show()
+                    },
+                )
             }
         }
     }
@@ -326,3 +460,10 @@ fun formatDuration(seconds: Int): String {
 }
 
 fun formatMs(ms: Long): String = formatDuration((ms / 1000).toInt())
+
+/** "1 Std. 0 Min." bzw. "42 Min." für Album-Gesamtdauern. */
+fun formatLong(seconds: Int): String {
+    val h = seconds / 3600
+    val m = (seconds % 3600) / 60
+    return if (h > 0) "$h Std. $m Min." else "$m Min."
+}

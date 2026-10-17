@@ -10,10 +10,15 @@ Android-Client für [Navidrome](https://www.navidrome.org/) (Subsonic-API), gesc
 - Hintergrundwiedergabe mit Benachrichtigung, Sperrbildschirm- und Bluetooth-Steuerung
 - Warteschlange (als Nächstes / anhängen / entfernen), Zufall, Wiederholen
 - Zufallsmix aus der ganzen Bibliothek
+- Synchronisierte Songtexte, die Wort für Wort mitlaufen (von Navidrome; optional ergänzt über
+  [LRCLIB](https://lrclib.net), abschaltbar im Menü auf der Startseite)
+- Favoriten für Titel und Alben
 - Scrobbling an Navidrome („Spielt gerade“ + nach halber Laufzeit)
 - Musik anfordern über [Lidarr](https://lidarr.audio/): Alben oder ganze Künstler suchen und hinzufügen,
   Downloads verfolgen (Tab „Anfragen“; benötigt Lidarr-URL und API-Key)
 - In-App-Updates über GitHub Releases
+
+Schrift: [Manrope](https://github.com/googlefonts/manrope), SIL Open Font License (`licenses/Manrope-OFL.txt`).
 
 ## Bauen
 

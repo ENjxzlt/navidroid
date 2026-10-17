@@ -3,6 +3,7 @@ package dev.navidroid
 import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import dev.navidroid.data.LyricsRepository
 import dev.navidroid.data.SessionStore
 import dev.navidroid.data.SubsonicClient
 import dev.navidroid.lidarr.LidarrClient
@@ -14,6 +15,8 @@ class NaviApp : Application(), ImageLoaderFactory {
     lateinit var session: SessionStore
         private set
     lateinit var client: SubsonicClient
+        private set
+    lateinit var lyrics: LyricsRepository
         private set
     lateinit var lidarrStore: LidarrStore
         private set
@@ -31,6 +34,7 @@ class NaviApp : Application(), ImageLoaderFactory {
         super.onCreate()
         session = SessionStore(this)
         client = SubsonicClient(http, session)
+        lyrics = LyricsRepository(this, http, client)
         lidarrStore = LidarrStore(this)
         lidarr = LidarrClient(http, lidarrStore)
     }

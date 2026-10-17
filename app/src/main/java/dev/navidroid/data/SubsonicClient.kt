@@ -115,6 +115,14 @@ class SubsonicClient(
         call("scrobble", "id" to id, "submission" to "$submission", "time" to timeMs?.toString())
     }
 
+    suspend fun setStarred(id: String, starred: Boolean, isAlbum: Boolean = false) {
+        call(if (starred) "star" else "unstar", (if (isAlbum) "albumId" else "id") to id)
+    }
+
+    /** OpenSubsonic-Erweiterung (Navidrome ≥ 0.53); ältere Server antworten mit einem Fehler. */
+    suspend fun lyrics(songId: String): List<StructuredLyrics> =
+        call("getLyricsBySongId", "id" to songId).lyricsList?.structuredLyrics.orEmpty()
+
     fun streamUrl(id: String): String = buildUrl(credentials(), "stream", listOf("id" to id)).toString()
 
     fun coverArtUrl(id: String?, size: Int): String? {

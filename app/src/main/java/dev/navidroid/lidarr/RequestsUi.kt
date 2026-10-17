@@ -26,6 +26,19 @@ import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import dev.navidroid.ui.RoundIconButton
+import dev.navidroid.ui.ScreenTitle
+import dev.navidroid.ui.SearchField
+import dev.navidroid.ui.SegmentedControl
+import dev.navidroid.ui.theme.Navi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -184,6 +197,7 @@ fun RequestsTab(app: NaviApp) {
     var showSettings by remember { mutableStateOf(false) }
 
     if (!configured) {
+        ScreenTitle("Anfragen")
         Column(
             Modifier.fillMaxSize().padding(32.dp),
             verticalArrangement = Arrangement.Center,
@@ -196,6 +210,7 @@ fun RequestsTab(app: NaviApp) {
             Text(
                 "Verbinde deinen Lidarr-Server, um neue Künstler und Alben zu suchen und herunterladen zu lassen.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
             )
             Spacer(Modifier.size(16.dp))
             Button(onClick = { showSettings = true }) { Text("Lidarr verbinden") }
@@ -220,6 +235,7 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
     var confirmArtist by remember { mutableStateOf<LidarrArtist?>(null) }
 
     LaunchedEffect(vm) {
+        if (vm.queue == null) vm.loadQueue()
         vm.messages.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
     }
     // Downloads automatisch aktualisieren, solange die Ansicht offen ist.
@@ -231,33 +247,25 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            LazyRow(
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(RequestMode.entries) { m ->
-                    FilterChip(selected = vm.mode == m, onClick = { vm.selectMode(m) }, label = { Text(m.label) })
-                }
-            }
-            IconButton(onClick = onOpenSettings) { Icon(Icons.Filled.Settings, "Lidarr-Einstellungen") }
+        ScreenTitle("Anfragen") {
+            RoundIconButton(Icons.Rounded.Tune, "Lidarr-Einstellungen", onOpenSettings)
         }
+        SegmentedControl(
+            options = RequestMode.entries.map { it to it.label },
+            selected = vm.mode,
+            onSelect = vm::selectMode,
+            badge = { m -> if (m == RequestMode.Downloads) ((vm.queue as? Load.Ok)?.value?.size ?: 0) else 0 },
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        )
 
         if (vm.mode == RequestMode.Downloads) {
             QueueList(vm)
         } else {
-            OutlinedTextField(
+            SearchField(
                 value = vm.query,
                 onValueChange = vm::onQuery,
-                placeholder = { Text(if (vm.mode == RequestMode.Albums) "Album suchen …" else "Künstler suchen …") },
-                leadingIcon = { Icon(Icons.Filled.Search, null) },
-                trailingIcon = {
-                    if (vm.query.isNotEmpty()) IconButton(onClick = { vm.onQuery("") }) { Icon(Icons.Filled.Clear, "Leeren") }
-                },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                placeholder = if (vm.mode == RequestMode.Albums) "Album bei Lidarr suchen" else "Künstler bei Lidarr suchen",
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
             if (vm.mode == RequestMode.Albums) {
                 SearchResults(vm.albums, onRetry = { vm.search() }) { list ->
@@ -302,9 +310,9 @@ private fun <T> SearchResults(state: Load<List<T>>?, onRetry: () -> Unit, conten
 
 @Composable
 private fun RemoteCover(url: String?, modifier: Modifier) {
-    Box(modifier, contentAlignment = Alignment.Center) {
+    Box(modifier.background(Navi.Surface2), contentAlignment = Alignment.Center) {
         Icon(Icons.Filled.LibraryAdd, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-        if (url != null) AsyncImage(model = url, contentDescription = null, modifier = Modifier.matchParentSize())
+        if (url != null) AsyncImage(model = url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
     }
 }
 
@@ -314,10 +322,10 @@ private fun AlbumResult(vm: RequestsVm, album: LidarrAlbum) {
         leadingContent = {
             RemoteCover(
                 album.imageUrl,
-                Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)),
+                Modifier.size(60.dp).clip(RoundedCornerShape(10.dp)),
             )
         },
-        headlineContent = { Text(album.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        headlineContent = { Text(album.title, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             Text(
                 listOfNotNull(album.artistName.takeIf { it.isNotEmpty() }, album.year, album.type).joinToString(" · "),
@@ -344,8 +352,8 @@ private fun AlbumResult(vm: RequestsVm, album: LidarrAlbum) {
 @Composable
 private fun ArtistResult(vm: RequestsVm, artist: LidarrArtist, onRequest: () -> Unit) {
     ListItem(
-        leadingContent = { RemoteCover(artist.imageUrl, Modifier.size(56.dp).clip(CircleShape)) },
-        headlineContent = { Text(artist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingContent = { RemoteCover(artist.imageUrl, Modifier.size(60.dp).clip(CircleShape)) },
+        headlineContent = { Text(artist.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             val info = listOfNotNull(
                 if (artist.inLibrary) "In Lidarr" else null,
@@ -378,17 +386,26 @@ private fun RequestAction(
 ) {
     when {
         busy -> CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-        done || existingLabel != null -> Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.CheckCircle, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.size(4.dp))
-            Text(
-                if (done) doneLabel else existingLabel.orEmpty(),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
+        done || existingLabel != null -> {
+            val color = if (done) MaterialTheme.colorScheme.primary else Navi.Muted
+            Row(
+                Modifier.height(32.dp).clip(RoundedCornerShape(16.dp)).background(Navi.Surface).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Check, null, Modifier.size(14.dp), tint = color)
+                Spacer(Modifier.size(6.dp))
+                Text(if (done) doneLabel else existingLabel.orEmpty(), style = MaterialTheme.typography.labelMedium, color = color)
+            }
         }
-        else -> FilledTonalButton(onClick = onAction, contentPadding = PaddingValues(horizontal = 12.dp)) {
-            Text(actionLabel)
+        else -> Surface(
+            onClick = onAction,
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.height(36.dp),
+        ) {
+            Box(Modifier.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
+                Text(actionLabel, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold), color = Navi.OnAccent)
+            }
         }
     }
 }
@@ -408,26 +425,35 @@ private fun QueueList(vm: RequestsVm) {
                 }
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 items(q.value) { item ->
-                    ListItem(
-                        headlineContent = { Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        supportingContent = {
-                            Column {
-                                Text(
-                                    listOfNotNull(item.artist, item.status, item.timeLeft?.let { "noch $it" }).joinToString(" · "),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                item.progress?.let {
-                                    LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
-                                }
-                                item.error?.let {
-                                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, maxLines = 2)
-                                }
+                    Column(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Navi.Surface).padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(item.status.uppercase(), style = MaterialTheme.typography.labelSmall, color = Navi.Muted, modifier = Modifier.weight(1f))
+                            item.timeLeft?.let { Text("noch $it", style = MaterialTheme.typography.bodySmall, color = Navi.Muted) }
+                        }
+                        Text(
+                            listOfNotNull(item.title, item.artist).joinToString(" · "),
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        item.progress?.let { p ->
+                            Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Navi.Outline)) {
+                                Box(Modifier.fillMaxWidth(p).height(6.dp).background(MaterialTheme.colorScheme.primary))
                             }
-                        },
-                    )
+                        }
+                        item.error?.let {
+                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                        }
+                    }
                 }
             }
         }

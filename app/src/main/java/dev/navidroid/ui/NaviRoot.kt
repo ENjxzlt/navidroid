@@ -1,16 +1,22 @@
 package dev.navidroid.ui
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.background
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,6 +26,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -27,6 +36,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import dev.navidroid.NaviApp
+import dev.navidroid.ui.theme.Navi
 import dev.navidroid.update.UpdateDialog
 import dev.navidroid.update.UpdateVm
 import dev.navidroid.update.Updater
@@ -38,26 +48,45 @@ fun NaviRoot(app: NaviApp) {
     val playerState by player.state.collectAsStateWithLifecycle()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
-    var tab by rememberSaveable { mutableStateOf(HomeTab.Albums) }
+    var tab by rememberSaveable { mutableStateOf(HomeTab.Start) }
 
     val updates: UpdateVm = viewModel { UpdateVm(Updater(app, app.http)) }
     LaunchedEffect(Unit) { updates.checkOnStart() }
     UpdateDialog(updates)
 
-    val showMini = playerState.hasItem && route != null && route != Routes.PLAYER && route != Routes.LOGIN
+    val fullScreen = route == Routes.PLAYER || route == Routes.LYRICS || route == Routes.LOGIN
+    val showMini = playerState.hasItem && route != null && !fullScreen
 
     Scaffold(
+        containerColor = Navi.Bg,
         bottomBar = {
             Column {
-                if (showMini) MiniPlayer(playerState, onOpen = { nav.navigate(Routes.PLAYER) })
+                if (showMini) {
+                    MiniPlayer(
+                        playerState,
+                        onOpen = { nav.navigate(Routes.PLAYER) },
+                        modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                    )
+                }
                 if (route == Routes.HOME) {
-                    NavigationBar {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Navi.Divider))
+                    NavigationBar(containerColor = Navi.Bg, tonalElevation = 0.dp) {
                         HomeTab.entries.forEach { t ->
+                            val selected = tab == t
                             NavigationBarItem(
-                                selected = tab == t,
+                                selected = selected,
                                 onClick = { tab = t },
                                 icon = { Icon(t.icon, contentDescription = null) },
-                                label = { Text(t.label) },
+                                label = {
+                                    Text(t.label, fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold)
+                                },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    unselectedIconColor = Navi.Faint,
+                                    unselectedTextColor = Navi.Faint,
+                                    indicatorColor = Color.Transparent,
+                                ),
                             )
                         }
                     }
@@ -67,7 +96,7 @@ fun NaviRoot(app: NaviApp) {
             }
         },
     ) { padding ->
-        // Nur den unteren Abstand übernehmen; die Statusleiste behandeln die TopAppBars der Screens.
+        // Nur den unteren Abstand übernehmen; die Statusleiste behandeln die Screens selbst.
         val bottom = PaddingValues(bottom = padding.calculateBottomPadding())
         NavHost(
             navController = nav,
@@ -84,6 +113,7 @@ fun NaviRoot(app: NaviApp) {
                     app = app,
                     tab = tab,
                     nav = nav,
+                    onTabChange = { tab = it },
                     onCheckUpdates = { updates.checkManually() },
                     onLogout = {
                         player.stop()
@@ -95,7 +125,15 @@ fun NaviRoot(app: NaviApp) {
             composable(Routes.ALBUM) { e -> AlbumScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.ARTIST) { e -> ArtistScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.PLAYLIST) { e -> PlaylistScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
-            composable(Routes.PLAYER) { PlayerScreen(onClose = { nav.popBackStack() }) }
+            composable(Routes.PLAYER) {
+                PlayerScreen(
+                    onClose = { nav.popBackStack() },
+                    onOpenLyrics = { nav.navigate(Routes.LYRICS) },
+                    onOpenAlbum = { id -> nav.popBackStack(); nav.openAlbum(id) },
+                    onOpenArtist = { id -> nav.popBackStack(); nav.openArtist(id) },
+                )
+            }
+            composable(Routes.LYRICS) { LyricsScreen(app, onClose = { nav.popBackStack() }) }
         }
     }
 }

@@ -3,6 +3,7 @@ package dev.navidroid.playback
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
+import android.os.Bundle
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.media3.common.C
@@ -17,11 +18,20 @@ import dev.navidroid.data.SubsonicClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 data class QueueEntry(val title: String, val artist: String?)
 
 data class PlayerUiState(
     val hasItem: Boolean = false,
+    val mediaId: String? = null,
+    val albumId: String? = null,
+    val artistId: String? = null,
+    val starred: Boolean = false,
     val title: String = "",
     val artist: String? = null,
     val album: String? = null,
@@ -41,6 +51,10 @@ class PlayerConnection(context: Context, private val client: SubsonicClient) {
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
     private var controller: MediaController? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    /** Favoriten-Status der bekannten Titel; wird beim Einreihen aus den Song-Daten befüllt. */
+    private val starredIds = HashSet<String>()
     private val future: ListenableFuture<MediaController> = MediaController.Builder(
         context,
         SessionToken(context, ComponentName(context, PlaybackService::class.java)),
@@ -70,8 +84,13 @@ class PlayerConnection(context: Context, private val client: SubsonicClient) {
             QueueEntry(m.title?.toString().orEmpty(), m.artist?.toString())
         }
         val duration = c.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: md.durationMs ?: 0L
+        val item = c.currentMediaItem
         _state.value = PlayerUiState(
-            hasItem = c.currentMediaItem != null,
+            hasItem = item != null,
+            mediaId = item?.mediaId,
+            albumId = md.extras?.getString(EXTRA_ALBUM_ID),
+            artistId = md.extras?.getString(EXTRA_ARTIST_ID),
+            starred = item?.mediaId in starredIds,
             title = md.title?.toString().orEmpty(),
             artist = md.artist?.toString(),
             album = md.albumTitle?.toString(),
@@ -154,6 +173,21 @@ class PlayerConnection(context: Context, private val client: SubsonicClient) {
         }
     }
 
+    /** Setzt bzw. entfernt den aktuellen Titel aus den Favoriten (optimistisch, bei Fehler zurück). */
+    fun toggleStarCurrent() {
+        val id = controller?.currentMediaItem?.mediaId ?: return
+        val star = id !in starredIds
+        setStarredLocal(id, star)
+        scope.launch {
+            runCatching { client.setStarred(id, star) }.onFailure { setStarredLocal(id, !star) }
+        }
+    }
+
+    private fun setStarredLocal(id: String, star: Boolean) {
+        if (star) starredIds += id else starredIds -= id
+        update()
+    }
+
     fun stop() {
         controller?.run {
             stop()
@@ -162,11 +196,17 @@ class PlayerConnection(context: Context, private val client: SubsonicClient) {
     }
 
     fun release() {
+        scope.cancel()
         controller?.removeListener(listener)
         MediaController.releaseFuture(future)
     }
 
-    private fun Song.toMediaItem(): MediaItem = MediaItem.Builder()
+    private fun Song.toMediaItem(): MediaItem {
+        if (starred != null) starredIds += id
+        return buildItem()
+    }
+
+    private fun Song.buildItem(): MediaItem = MediaItem.Builder()
         .setMediaId(id)
         .setMediaMetadata(
             MediaMetadata.Builder()
@@ -177,7 +217,16 @@ class PlayerConnection(context: Context, private val client: SubsonicClient) {
                 .setDurationMs(duration * 1000L)
                 .setIsPlayable(true)
                 .setIsBrowsable(false)
+                .setExtras(Bundle().apply {
+                    putString(EXTRA_ALBUM_ID, albumId)
+                    putString(EXTRA_ARTIST_ID, artistId)
+                })
                 .build()
         )
         .build()
+
+    companion object {
+        private const val EXTRA_ALBUM_ID = "albumId"
+        private const val EXTRA_ARTIST_ID = "artistId"
+    }
 }

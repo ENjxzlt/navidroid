@@ -18,25 +18,31 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.RepeatOne
-import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
@@ -53,18 +59,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
-import coil.compose.AsyncImage
 import dev.navidroid.playback.PlayerUiState
+import dev.navidroid.ui.theme.Navi
 import kotlinx.coroutines.delay
 
 @Composable
-fun MiniPlayer(state: PlayerUiState, onOpen: () -> Unit) {
+fun MiniPlayer(state: PlayerUiState, onOpen: () -> Unit, modifier: Modifier = Modifier) {
     val player = LocalPlayer.current
     val progress by produceState(0f, state.durationMs) {
         while (true) {
@@ -72,206 +81,270 @@ fun MiniPlayer(state: PlayerUiState, onOpen: () -> Unit) {
             delay(500)
         }
     }
-    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
-        Column {
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(2.dp))
+    Surface(
+        onClick = onOpen,
+        shape = RoundedCornerShape(18.dp),
+        color = Navi.Surface2,
+        modifier = modifier.fillMaxWidth().height(64.dp).shadow(12.dp, RoundedCornerShape(18.dp)),
+    ) {
+        Box {
             Row(
-                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                Modifier.fillMaxSize().padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                AsyncImage(
-                    model = state.artworkUri,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
-                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                    Text(state.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        state.artist.orEmpty(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                CoverImage(state.artworkUri, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)))
+                Column(Modifier.weight(1f)) {
+                    Text(state.title, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(state.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                IconButton(onClick = player::togglePlayPause) {
-                    Icon(
-                        if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        if (state.isPlaying) "Pause" else "Abspielen",
-                    )
+                Surface(onClick = player::togglePlayPause, shape = CircleShape, color = Navi.Text, modifier = Modifier.size(44.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            if (state.isPlaying) "Pause" else "Abspielen",
+                            tint = Navi.Bg,
+                        )
+                    }
                 }
-                IconButton(onClick = player::next) { Icon(Icons.Filled.SkipNext, "Nächster Titel") }
+                IconButton(onClick = player::next) { Icon(Icons.Rounded.SkipNext, "Nächster Titel", tint = Navi.Text) }
+            }
+            Box(
+                Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp).fillMaxWidth().height(2.dp).background(Color(0xFF2E323B))
+            ) {
+                Box(Modifier.fillMaxWidth(progress).height(2.dp).background(MaterialTheme.colorScheme.primary))
             }
         }
     }
 }
 
+/** Fortschrittsbalken mit Zeiten, wie im Redesign: dünne Spur, kleiner runder Griff. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlayerScreen(onClose: () -> Unit) {
+fun PlaybackProgress(state: PlayerUiState, soft: Color, modifier: Modifier = Modifier) {
     val player = LocalPlayer.current
-    val s by player.state.collectAsStateWithLifecycle()
     var position by remember { mutableLongStateOf(0L) }
     var dragging by remember { mutableStateOf<Float?>(null) }
-    var showQueue by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         while (true) {
             position = player.positionMs
             delay(250)
         }
     }
-    val fraction = if (s.durationMs > 0) (position.toFloat() / s.durationMs).coerceIn(0f, 1f) else 0f
-    val shownMs = dragging?.let { (it * s.durationMs).toLong() } ?: position
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
-            .systemBarsPadding()
-            .padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onClose) { Icon(Icons.Filled.KeyboardArrowDown, "Schließen") }
-            Text(
-                s.album.orEmpty(),
-                style = MaterialTheme.typography.labelLarge,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = { showQueue = true }) {
-                Icon(Icons.AutoMirrored.Filled.QueueMusic, "Warteschlange")
-            }
-        }
-
-        Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
-            AsyncImage(
-                model = s.artworkUri,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-        }
-
-        if (!s.hasItem) {
-            Text("Keine Wiedergabe", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Text(
-            s.title,
-            style = MaterialTheme.typography.headlineSmall,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-        )
-        Text(
-            s.artist.orEmpty(),
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-
-        Spacer(Modifier.height(16.dp))
+    val fraction = if (state.durationMs > 0) (position.toFloat() / state.durationMs).coerceIn(0f, 1f) else 0f
+    val shownMs = dragging?.let { (it * state.durationMs).toLong() } ?: position
+    Column(modifier) {
         Slider(
             value = dragging ?: fraction,
             onValueChange = { dragging = it },
             onValueChangeFinished = {
-                dragging?.let { player.seekTo((it * s.durationMs).toLong()) }
+                dragging?.let { player.seekTo((it * state.durationMs).toLong()) }
                 dragging = null
             },
-            enabled = s.durationMs > 0,
+            enabled = state.durationMs > 0,
+            thumb = { Box(Modifier.size(16.dp).clip(CircleShape).background(Color.White)) },
+            track = { s ->
+                Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = 0.18f))) {
+                    Box(Modifier.fillMaxWidth(s.value).height(4.dp).background(Color.White))
+                }
+            },
+            modifier = Modifier.height(24.dp),
         )
         Row(Modifier.fillMaxWidth()) {
-            Text(formatMs(shownMs), style = MaterialTheme.typography.bodySmall)
+            Text(formatMs(shownMs), style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = soft)
             Spacer(Modifier.weight(1f))
-            Text(formatMs(s.durationMs), style = MaterialTheme.typography.bodySmall)
+            Text("-" + formatMs((state.durationMs - shownMs).coerceAtLeast(0)), style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = soft)
+        }
+    }
+}
+
+@Composable
+fun PlayPauseButton(state: PlayerUiState, background: Color, size: Int) {
+    val player = LocalPlayer.current
+    Surface(onClick = player::togglePlayPause, shape = CircleShape, color = Color.White, modifier = Modifier.size(size.dp)) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                if (state.isPlaying) "Pause" else "Abspielen",
+                tint = background,
+                modifier = Modifier.size((size * 0.45f).dp),
+            )
+        }
+    }
+}
+
+@Composable
+fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (String) -> Unit, onOpenArtist: (String) -> Unit) {
+    val player = LocalPlayer.current
+    val s by player.state.collectAsStateWithLifecycle()
+    val tint = rememberCoverTint(s.artworkUri, fallback = Navi.Surface)
+    val soft = mutedOn(tint)
+    val accent = MaterialTheme.colorScheme.primary
+    var showQueue by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier.fillMaxSize().background(tint).systemBarsPadding().padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RoundIconButton(Icons.Rounded.KeyboardArrowDown, "Player schließen", onClose, container = Color.White.copy(alpha = 0.08f))
+            Column(
+                Modifier.weight(1f).clickable(enabled = s.albumId != null) { s.albumId?.let(onOpenAlbum) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text("AUS DEM ALBUM", style = MaterialTheme.typography.labelSmall, color = soft)
+                Text(s.album.orEmpty(), style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Box {
+                RoundIconButton(Icons.Rounded.MoreHoriz, "Weitere Optionen", { menu = true }, container = Color.White.copy(alpha = 0.08f))
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    s.albumId?.let { id ->
+                        DropdownMenuItem(
+                            text = { Text("Zum Album") },
+                            leadingIcon = { Icon(Icons.Rounded.Album, null) },
+                            onClick = { menu = false; onOpenAlbum(id) },
+                        )
+                    }
+                    s.artistId?.let { id ->
+                        DropdownMenuItem(
+                            text = { Text("Zum Künstler") },
+                            leadingIcon = { Icon(Icons.Rounded.Person, null) },
+                            onClick = { menu = false; onOpenArtist(id) },
+                        )
+                    }
+                }
+            }
         }
 
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 16.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = player::toggleShuffle) {
-                Icon(
-                    Icons.Filled.Shuffle,
-                    "Zufällige Wiedergabe",
-                    tint = if (s.shuffle) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            CoverImage(
+                s.artworkUri,
+                Modifier.aspectRatio(1f).shadow(24.dp, RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp)),
+            )
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (s.hasItem) s.title else "Keine Wiedergabe",
+                    style = MaterialTheme.typography.headlineSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    s.artist.orEmpty(),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = soft,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(enabled = s.artistId != null) { s.artistId?.let(onOpenArtist) },
                 )
             }
-            IconButton(onClick = player::previous, modifier = Modifier.size(56.dp)) {
-                Icon(Icons.Filled.SkipPrevious, "Vorheriger Titel", Modifier.size(36.dp))
-            }
-            FilledIconButton(onClick = player::togglePlayPause, modifier = Modifier.size(72.dp)) {
+            IconButton(onClick = player::toggleStarCurrent, enabled = s.hasItem) {
                 Icon(
-                    if (s.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    if (s.isPlaying) "Pause" else "Abspielen",
-                    Modifier.size(40.dp),
-                )
-            }
-            IconButton(onClick = player::next, modifier = Modifier.size(56.dp)) {
-                Icon(Icons.Filled.SkipNext, "Nächster Titel", Modifier.size(36.dp))
-            }
-            IconButton(onClick = player::cycleRepeat) {
-                Icon(
-                    if (s.repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
-                    "Wiederholen",
-                    tint = if (s.repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (s.starred) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                    if (s.starred) "Aus Favoriten entfernen" else "Zu Favoriten",
+                    tint = if (s.starred) accent else Color.White,
+                    modifier = Modifier.size(26.dp),
                 )
             }
         }
-        Spacer(Modifier.height(8.dp))
+
+        PlaybackProgress(s, soft)
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = player::toggleShuffle, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Rounded.Shuffle, "Zufällige Wiedergabe", tint = if (s.shuffle) accent else soft)
+            }
+            IconButton(onClick = player::previous, modifier = Modifier.size(56.dp)) {
+                Icon(Icons.Rounded.SkipPrevious, "Vorheriger Titel", tint = Color.White, modifier = Modifier.size(36.dp))
+            }
+            PlayPauseButton(s, tint, 80)
+            IconButton(onClick = player::next, modifier = Modifier.size(56.dp)) {
+                Icon(Icons.Rounded.SkipNext, "Nächster Titel", tint = Color.White, modifier = Modifier.size(36.dp))
+            }
+            IconButton(onClick = player::cycleRepeat, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    if (s.repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                    "Wiederholen",
+                    tint = if (s.repeatMode != Player.REPEAT_MODE_OFF) accent else soft,
+                )
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            BottomPill(Icons.Rounded.Lyrics, "Songtext", onOpenLyrics, Modifier.weight(1f))
+            BottomPill(Icons.AutoMirrored.Rounded.QueueMusic, "Warteschlange", { showQueue = true }, Modifier.weight(1f))
+        }
     }
 
     if (showQueue) QueueSheet(s, onDismiss = { showQueue = false })
+}
+
+@Composable
+private fun BottomPill(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.08f), modifier = modifier.height(56.dp)) {
+        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, tint = Color.White)
+            Spacer(Modifier.width(10.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize), color = Color.White)
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QueueSheet(s: PlayerUiState, onDismiss: () -> Unit) {
     val player = LocalPlayer.current
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    val accent = MaterialTheme.colorScheme.primary
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Navi.Surface) {
         Text(
-            "Warteschlange (${s.queue.size})",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            "Warteschlange",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+        )
+        Text(
+            "${s.queue.size} Titel",
+            style = MaterialTheme.typography.bodySmall,
+            color = Navi.Muted,
+            modifier = Modifier.padding(horizontal = 20.dp),
         )
         val listState = rememberLazyListState(initialFirstVisibleItemIndex = s.currentIndex.coerceAtLeast(0))
-        LazyColumn(state = listState) {
+        LazyColumn(state = listState, modifier = Modifier.padding(top = 8.dp)) {
             itemsIndexed(s.queue) { i, entry ->
                 val current = i == s.currentIndex
-                ListItem(
-                    modifier = Modifier.clickable { player.skipTo(i) },
-                    leadingContent = {
-                        Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
-                            if (current) Icon(Icons.AutoMirrored.Filled.VolumeUp, null, tint = MaterialTheme.colorScheme.primary)
-                            else Text("${i + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    },
-                    headlineContent = {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (current) Navi.Surface2 else Color.Transparent)
+                        .clickable { player.skipTo(i) }
+                        .padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Box(Modifier.width(24.dp), contentAlignment = Alignment.Center) {
+                        if (current) Icon(Icons.Rounded.GraphicEq, "Läuft gerade", tint = accent, modifier = Modifier.size(18.dp))
+                        else Text("${i + 1}", color = Navi.Faint, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                    }
+                    Column(Modifier.weight(1f)) {
                         Text(
                             entry.title,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (current) accent else Navi.Text,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            color = if (current) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                         )
-                    },
-                    supportingContent = { Text(entry.artist.orEmpty(), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    trailingContent = {
-                        if (!current) {
-                            IconButton(onClick = { player.removeAt(i) }) { Icon(Icons.Filled.Close, "Entfernen") }
-                        }
-                    },
-                )
+                        Text(entry.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    if (!current) {
+                        IconButton(onClick = { player.removeAt(i) }) { Icon(Icons.Rounded.Close, "Entfernen", tint = Navi.Muted) }
+                    } else {
+                        Spacer(Modifier.size(48.dp))
+                    }
+                }
             }
         }
     }

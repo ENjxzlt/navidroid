@@ -18,6 +18,7 @@ data class SubsonicResponse(
     val playlist: Playlist? = null,
     val searchResult3: SearchResult? = null,
     val randomSongs: SongList? = null,
+    val lyricsList: LyricsList? = null,
 )
 
 @Serializable
@@ -51,6 +52,7 @@ data class Album(
     val songCount: Int = 0,
     val duration: Int = 0,
     val year: Int? = null,
+    val starred: String? = null,
     val song: List<Song> = emptyList(),
 )
 
@@ -67,6 +69,7 @@ data class Song(
     val duration: Int = 0,
     val coverArt: String? = null,
     val year: Int? = null,
+    val starred: String? = null,
 )
 
 @Serializable
@@ -93,3 +96,18 @@ data class SearchResult(
 
 @Serializable
 data class SongList(val song: List<Song> = emptyList())
+
+// OpenSubsonic: getLyricsBySongId
+@Serializable
+data class LyricsList(val structuredLyrics: List<StructuredLyrics> = emptyList())
+
+@Serializable
+data class StructuredLyrics(
+    val lang: String? = null,
+    val synced: Boolean = false,
+    val offset: Long = 0,
+    val line: List<LyricsLine> = emptyList(),
+)
+
+@Serializable
+data class LyricsLine(val start: Long? = null, val value: String = "")
