@@ -37,7 +37,7 @@ from yt_dlp.version import __version__ as YTDLP_VERSION
 import ai
 from matching import is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -48,7 +48,8 @@ LIDARR_STAGING = os.environ.get("LIDARR_STAGING_DIR", str(STAGING)).rstrip("/")
 VIDEO_DIR = Path(os.environ.get("VIDEO_DIR", "/videos"))
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 AUDIO_QUALITY = os.environ.get("AUDIO_QUALITY", "320")
-VIDEO_MAX_HEIGHT = int(os.environ.get("VIDEO_MAX_HEIGHT", "1080"))
+VIDEO_MAX_HEIGHT = int(os.environ.get("VIDEO_MAX_HEIGHT", "720"))
+VIDEO_TIMEOUT = int(os.environ.get("VIDEO_TIMEOUT", "900"))  # Sekunden je Video, danach überspringen
 
 if not TOKEN or not LIDARR_URL or not LIDARR_KEY:
     raise SystemExit("HELPER_TOKEN, LIDARR_URL und LIDARR_API_KEY müssen gesetzt sein")
@@ -206,9 +207,15 @@ def _load_jobs() -> None:
     if not _JOBS_FILE.exists():
         return
     for j in json.loads(_JOBS_FILE.read_text()):
+        steps = {s["key"]: s for s in j.get("steps", [])}
+        if "videos" in steps and steps["videos"]["state"] == "active":
+            steps["videos"]["state"] = "failed"  # Videos wurden durch den Neustart unterbrochen
         if j["status"] in ("queued", "running"):
-            j["status"] = "failed"
-            j["error"] = "Durch Neustart des Helfers abgebrochen"
+            if steps.get("import", {}).get("state") == "done":
+                j["status"] = "done"  # Musik ist bereits importiert
+            else:
+                j["status"] = "failed"
+                j["error"] = "Durch Neustart des Helfers abgebrochen"
         _jobs[j["id"]] = j
 
 
@@ -392,35 +399,67 @@ def run_job(job: dict) -> None:
     _update(job, "import", state="done", done=1)
     shutil.rmtree(workdir, ignore_errors=True)
 
-    # Optional: Musikvideos
+    # Optional: Musikvideos – laufen in einer eigenen Warteschlange, damit der nächste Import nicht wartet.
     if job["videos"]:
-        _update(job, "videos", state="active")
-        index = _videos_index()
-        target_dir = VIDEO_DIR / safe_name(artist) / safe_name(album["title"])
-        target_dir.mkdir(parents=True, exist_ok=True)
-        for i, (track, vid) in enumerate(plan, 1):
-            base = f"{(track.get('absoluteTrackNumber') or 0):02d} - {safe_name(track['title'])}"
+        _update(job, "videos", state="active", done=0)
+        tasks = [{
+            "artist": artist,
+            "album": album["title"],
+            "title": track["title"],
+            "base": f"{(track.get('absoluteTrackNumber') or 0):02d} - {safe_name(track['title'])}",
+            "vid": vid.split("#", 1)[0],
+        } for track, vid in plan]
+        # Bei Kapitel-Videos gibt es nur ein Video für das ganze Album
+        if all("#" in vid for _, vid in plan):
+            tasks = tasks[:0]
+        _video_queue.put((job["id"], tasks))
+
+
+_video_queue: "queue.Queue[tuple[str, list[dict]]]" = queue.Queue()
+_video_lock = threading.Lock()
+
+
+def video_worker() -> None:
+    while True:
+        job_id, tasks = _video_queue.get()
+        job = _jobs.get(job_id)
+        if not job:
+            continue
+        failed = 0
+        for i, t in enumerate(tasks, 1):
+            target_dir = VIDEO_DIR / safe_name(t["artist"]) / safe_name(t["album"])
+            target_dir.mkdir(parents=True, exist_ok=True)
+            out = target_dir / f"{t['base']}.mp4"
             h = VIDEO_MAX_HEIGHT
-            opts = ydl_opts(
-                noplaylist=True,
-                format=f"bv*[height<={h}][ext=mp4]+ba[ext=m4a]/b[height<={h}][ext=mp4]/bv*[height<={h}]+ba/b",
-                merge_output_format="mp4",
-                outtmpl=str(target_dir / f"{base}.%(ext)s"),
-            )
+            cmd = [
+                "yt-dlp", "-q", "--no-progress", "--no-playlist",
+                "-f", f"bv*[height<={h}][ext=mp4]+ba[ext=m4a]/b[height<={h}][ext=mp4]/bv*[height<={h}]+ba/b",
+                "--merge-output-format", "mp4", "-o", str(target_dir / f"{t['base']}.%(ext)s"),
+                "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3",
+            ]
+            if COOKIES_FILE.exists():
+                cmd += ["--cookies", str(COOKIES_FILE)]
+            cmd.append(video_url(t["vid"]))
             try:
-                with YoutubeDL(opts) as ydl:
-                    ydl.download([video_url(vid)])
-                path = target_dir / f"{base}.mp4"
-                if path.exists():
-                    key = _video_key(artist, track["title"])
-                    index[key] = {"path": str(path), "artist": artist, "title": track["title"], "album": album["title"]}
-            except Exception as e:  # ein fehlendes Video soll den Import nicht scheitern lassen
-                log.warning("Video %s fehlgeschlagen: %s", vid, e)
+                subprocess.run(cmd, check=True, timeout=VIDEO_TIMEOUT, capture_output=True, text=True)
+            except subprocess.TimeoutExpired:
+                log.warning("Video %s nach %ss abgebrochen", t["vid"], VIDEO_TIMEOUT)
+            except subprocess.CalledProcessError as e:
+                log.warning("Video %s fehlgeschlagen: %s", t["vid"], (e.stderr or "").strip()[-200:])
+            for leftover in target_dir.glob(f"{glob.escape(t['base'])}.*"):
+                if leftover.suffix in (".part", ".ytdl") or ".f" in leftover.stem[len(t["base"]):]:
+                    leftover.unlink(missing_ok=True)
+            if out.exists():
+                with _video_lock:
+                    index = _videos_index()
+                    index[_video_key(t["artist"], t["title"])] = {"path": str(out), "artist": t["artist"], "title": t["title"], "album": t["album"]}
+                    tmp = _VIDEOS_FILE.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(index, ensure_ascii=False))
+                    tmp.replace(_VIDEOS_FILE)
+            else:
+                failed += 1
             _update(job, "videos", done=i)
-        tmp = _VIDEOS_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(index, ensure_ascii=False))
-        tmp.replace(_VIDEOS_FILE)
-        _update(job, "videos", state="done")
+        _update(job, "videos", state="done" if failed < len(tasks) or not tasks else "failed")
 
 
 def _download_source(video_id: str, workdir: Path) -> tuple[Path, list[dict]]:
@@ -454,6 +493,7 @@ def worker() -> None:
 
 _load_jobs()
 threading.Thread(target=worker, daemon=True).start()
+threading.Thread(target=video_worker, daemon=True).start()
 if ai.configured():
     ai.ensure_key(DATA_DIR)
 

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AddBox
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Color
@@ -467,6 +468,23 @@ private fun PlaylistsList(app: NaviApp, nav: NavController) {
                     Column(Modifier.weight(1f)) {
                         Text("Neue Playlist", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold))
                         Text("Titel fügst du über ⋮ → „Zur Playlist hinzufügen“ hinzu", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+                    }
+                }
+            }
+            if (app.helper.configured) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { nav.navigate(Routes.AI_PLAYLIST) }.padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        Box(Modifier.size(60.dp).clip(RoundedCornerShape(10.dp)).background(Navi.Surface2), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text("Mit KI erstellen", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold))
+                            Text("Beschreib, was du hören willst – Claude stellt sie zusammen", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+                        }
                     }
                 }
             }

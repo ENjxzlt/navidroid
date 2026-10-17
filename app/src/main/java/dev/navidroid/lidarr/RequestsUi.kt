@@ -361,6 +361,14 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
     val context = LocalContext.current
     var confirmArtist by remember { mutableStateOf<LidarrArtist?>(null) }
 
+    // Suchbegriff aus anderen Screens übernehmen (z. B. fehlende Alben aus KI-Playlists)
+    LaunchedEffect(dev.navidroid.ui.RequestSearchBus.pendingQuery) {
+        dev.navidroid.ui.RequestSearchBus.pendingQuery?.let { q ->
+            vm.selectMode(RequestMode.Albums)
+            vm.onQuery(q)
+            dev.navidroid.ui.RequestSearchBus.pendingQuery = null
+        }
+    }
     LaunchedEffect(vm) {
         if (vm.queue == null) vm.loadQueue()
         vm.messages.collect { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }

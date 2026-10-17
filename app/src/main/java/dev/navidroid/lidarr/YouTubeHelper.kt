@@ -129,6 +129,29 @@ data class HelperJob(
 }
 
 @Serializable
+data class AiTrack(
+    val id: String,
+    val title: String = "",
+    val artist: String? = null,
+    val album: String? = null,
+    val albumId: String? = null,
+    val coverArt: String? = null,
+    val duration: Int = 0,
+    val year: Int? = null,
+)
+
+@Serializable
+data class AiMissing(val artist: String = "", val album: String = "", val reason: String = "")
+
+@Serializable
+data class AiPlaylist(
+    val name: String = "",
+    val description: String = "",
+    val tracks: List<AiTrack> = emptyList(),
+    val missing: List<AiMissing> = emptyList(),
+)
+
+@Serializable
 data class SkippedTrack(val title: String = "", val reason: String = "")
 
 @Serializable
@@ -138,6 +161,9 @@ private data class VideoMatch(val id: String, val url: String)
 class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     // Das Auslesen großer Playlists kann dauern.
     private val http = http.newBuilder().readTimeout(120, TimeUnit.SECONDS).build()
+
+    // Claude braucht für eine Playlist gern eine Minute oder mehr.
+    private val slowHttp = http.newBuilder().readTimeout(300, TimeUnit.SECONDS).build()
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val videoCache = HashMap<String, String?>()
 
@@ -155,7 +181,14 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     /** Header für die Video-Wiedergabe mit ExoPlayer. */
     fun authHeaders(): Map<String, String> = store.config?.let { mapOf("X-Helper-Token" to it.token) }.orEmpty()
 
-    private suspend fun send(cfg: HelperConfig, method: String, path: String, body: String? = null, query: Map<String, String> = emptyMap()): String =
+    private suspend fun send(
+        cfg: HelperConfig,
+        method: String,
+        path: String,
+        body: String? = null,
+        query: Map<String, String> = emptyMap(),
+        client: OkHttpClient = http,
+    ): String =
         withContext(Dispatchers.IO) {
             val base = cfg.url.toHttpUrlOrNull() ?: throw HelperException("Ungültige Helfer-URL")
             val url = base.newBuilder()
@@ -170,7 +203,7 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
                 .method(method, body?.toRequestBody("application/json".toMediaType()))
                 .build()
             try {
-                http.newCall(request).execute().use { resp ->
+                client.newCall(request).execute().use { resp ->
                     val text = resp.body?.string().orEmpty()
                     if (resp.code == 401) throw HelperException("Token wurde vom Helfer abgelehnt")
                     if (!resp.isSuccessful) throw HelperException(detail(text) ?: "Helfer-Fehler (HTTP ${resp.code})")
@@ -230,6 +263,33 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     }
 
     suspend fun jobs(): List<HelperJob> = decode(send(config(), "GET", "api/jobs"))
+
+    /** KI-Playlist über den Claude-Worker; der Helfer liest dafür die Bibliothek mit den Navidrome-Zugangsdaten. */
+    suspend fun aiPlaylist(
+        navidrome: dev.navidroid.data.Credentials,
+        wish: String,
+        count: Int,
+        preferRare: Boolean,
+        suggestMissing: Boolean,
+        previous: List<String>? = null,
+        refine: String? = null,
+    ): AiPlaylist {
+        val body = buildJsonObject {
+            put("navidrome", buildJsonObject {
+                put("url", navidrome.serverUrl)
+                put("user", navidrome.username)
+                put("token", navidrome.token)
+                put("salt", navidrome.salt)
+            })
+            put("prompt", wish)
+            put("count", count)
+            put("preferRare", preferRare)
+            put("suggestMissing", suggestMissing)
+            if (previous != null) put("previous", buildJsonArray { previous.forEach { add(JsonPrimitive(it)) } })
+            if (refine != null) put("refine", refine)
+        }
+        return decode(send(config(), "POST", "api/ai/playlist", body.toString(), client = slowHttp))
+    }
 
     suspend fun retryJob(id: String): HelperJob = decode(send(config(), "POST", "api/jobs/$id/retry", "{}"))
 

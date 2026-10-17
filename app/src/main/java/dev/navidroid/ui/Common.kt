@@ -97,6 +97,7 @@ object Routes {
     const val PLAYLIST_EDIT = "playlist/{id}/edit"
     const val PLAYER = "player"
     const val LYRICS = "lyrics"
+    const val AI_PLAYLIST = "ai-playlist"
 }
 
 fun NavController.openAlbum(id: String) = navigate("album/$id")
