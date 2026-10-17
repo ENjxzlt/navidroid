@@ -122,10 +122,14 @@ data class HelperJob(
     val steps: List<JobStep> = emptyList(),
     val status: String = "queued",
     val error: String? = null,
+    val skipped: List<SkippedTrack> = emptyList(),
     val createdAt: Long = 0,
 ) {
     val active: Boolean get() = status == "queued" || status == "running"
 }
+
+@Serializable
+data class SkippedTrack(val title: String = "", val reason: String = "")
 
 @Serializable
 private data class VideoMatch(val id: String, val url: String)
@@ -226,6 +230,12 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     }
 
     suspend fun jobs(): List<HelperJob> = decode(send(config(), "GET", "api/jobs"))
+
+    suspend fun retryJob(id: String): HelperJob = decode(send(config(), "POST", "api/jobs/$id/retry", "{}"))
+
+    suspend fun deleteJob(id: String) {
+        send(config(), "DELETE", "api/jobs/$id")
+    }
 
     /** Liefert die absolute Video-URL zu einem Titel oder null, wenn der Helfer keines hat. */
     suspend fun findVideo(artist: String, title: String): String? {

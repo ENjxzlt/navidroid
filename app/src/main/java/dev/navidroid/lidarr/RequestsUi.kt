@@ -192,6 +192,26 @@ class RequestsVm(private val lidarr: LidarrClient, private val helper: HelperCli
         }
     }
 
+    fun retryJob(job: HelperJob) = jobAction { helper.retryJob(job.id); messages.tryEmit("„${job.title}“ wird erneut geladen") }
+
+    fun removeJob(job: HelperJob) = jobAction {
+        helper.deleteJob(job.id)
+        helperJobs = helperJobs.filter { it.id != job.id }
+    }
+
+    private fun jobAction(block: suspend () -> Unit) {
+        viewModelScope.launch {
+            try {
+                block()
+                loadQueue()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                messages.tryEmit(e.message ?: "Aktion fehlgeschlagen")
+            }
+        }
+    }
+
     fun openImport(album: LidarrAlbum?) {
         importTarget = ImportTarget(album)
     }
@@ -642,7 +662,9 @@ private fun DownloadList(vm: RequestsVm, jobs: List<HelperJob>, queue: List<Queu
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(jobs.filter { it.status != "done" }, key = { "job_${it.id}" }) { HelperJobCard(it) }
+        items(jobs.filter { it.status != "done" }, key = { "job_${it.id}" }) { job ->
+            HelperJobCard(job, onRetry = { vm.retryJob(job) }, onRemove = { vm.removeJob(job) })
+        }
         items(queue) { item ->
             Column(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Navi.Surface).padding(16.dp),
@@ -690,7 +712,7 @@ private fun ProgressLine(fraction: Float) {
 }
 
 @Composable
-private fun HelperJobCard(job: HelperJob) {
+private fun HelperJobCard(job: HelperJob, onRetry: () -> Unit, onRemove: () -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Navi.Surface).padding(16.dp),
@@ -743,7 +765,29 @@ private fun HelperJobCard(job: HelperJob) {
                 }
             }
         }
+        if (job.skipped.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("${job.skipped.size} Titel übersprungen:", style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold), color = Color(0xFFFFB86B))
+                job.skipped.take(5).forEach { s ->
+                    Text("• ${s.title} – ${s.reason}", style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
         job.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        if (job.status == "failed") {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(onClick = onRetry, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).height(40.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("Erneut versuchen", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold), color = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
+                Surface(onClick = onRemove, shape = RoundedCornerShape(20.dp), color = Color.Transparent, border = BorderStroke(1.dp, Navi.Outline), modifier = Modifier.height(40.dp)) {
+                    Box(Modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+                        Text("Entfernen", style = MaterialTheme.typography.labelLarge, color = Navi.Text)
+                    }
+                }
+            }
+        }
     }
 }
 

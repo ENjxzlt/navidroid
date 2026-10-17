@@ -47,6 +47,11 @@ Einrichtung:
 3. Helfer und Lidarr mit derselben UID/GID laufen lassen, damit Lidarr die Dateien verschieben darf.
 4. In der App: Anfragen → Einstellungen → „YouTube-Helfer“ mit URL (Port 8787) und `HELPER_TOKEN`.
 
+**Altersbeschränkte Videos:** Dafür verlangt YouTube eine Anmeldung. Exportiere die Cookies eines
+angemeldeten Browsers im Netscape-Format (z. B. mit der Erweiterung „Get cookies.txt LOCALLY“) und lege sie als
+`cookies.txt` in den Datenordner des Helfers (`/data` im Container). Am besten ein eigenes, unwichtiges
+Google-Konto verwenden. Die Datei enthält deine Anmeldung – nicht weitergeben.
+
 Hinweis: YouTube-Downloads können gegen die Nutzungsbedingungen von YouTube verstoßen. Importiere nur
 Inhalte, die du nutzen darfst.
 

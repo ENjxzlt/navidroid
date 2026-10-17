@@ -36,7 +36,7 @@ from yt_dlp.version import __version__ as YTDLP_VERSION
 
 from matching import is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -59,6 +59,30 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("navidroid-helper")
 
 app = FastAPI(title="NaviDroid Helper", version=VERSION)
+
+# Optional: YouTube-Cookies (Netscape-Format) für altersbeschränkte Videos, siehe README.
+COOKIES_FILE = Path(os.environ.get("COOKIES_FILE", str(DATA_DIR / "cookies.txt")))
+
+
+def ydl_opts(**extra: Any) -> dict:
+    opts: dict[str, Any] = {"quiet": True, "noprogress": True, "retries": 5, "fragment_retries": 5, "extractor_retries": 3}
+    if COOKIES_FILE.exists():
+        opts["cookiefile"] = str(COOKIES_FILE)
+    opts.update(extra)
+    return opts
+
+
+def friendly_error(e: Exception) -> str:
+    msg = e.detail if isinstance(e, HTTPException) else str(e)
+    low = msg.lower()
+    if "confirm your age" in low:
+        return ("Altersbeschränktes Video – YouTube verlangt eine Anmeldung. "
+                "Lege YouTube-Cookies als cookies.txt im Datenordner des Helfers ab (siehe README).")
+    if "403" in low:
+        return "YouTube hat den Download blockiert (HTTP 403). Später erneut versuchen oder Helfer-Image aktualisieren."
+    if "private video" in low or "video unavailable" in low or "not available" in low:
+        return "Video ist nicht (mehr) verfügbar."
+    return msg.replace("ERROR: ", "")
 
 
 def require_token(x_helper_token: str = Header(default="")) -> None:
@@ -115,7 +139,7 @@ def cover_url(album: dict) -> str | None:
 def playlist_entries(url: str) -> tuple[dict, list[dict]]:
     if not is_youtube_url(url):
         raise HTTPException(400, "Bitte einen Link von youtube.com oder youtu.be angeben")
-    opts = {"quiet": True, "skip_download": True, "extract_flat": "in_playlist", "noprogress": True}
+    opts = ydl_opts(skip_download=True, extract_flat="in_playlist")
     try:
         with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -220,45 +244,63 @@ def run_job(job: dict) -> None:
     workdir = STAGING / job["id"]
     workdir.mkdir(parents=True, exist_ok=True)
 
-    # 1+2: Laden und in MP3 umwandeln
+    # 1+2: Laden und in MP3 umwandeln – je Titel bis zu 3 Versuche, Fehlschläge werden übersprungen
     _update(job, "download", state="active")
     files: dict[int, Path] = {}
-    sources: dict[str, tuple[Path, list[dict]]] = {}
+    sources: dict[str, tuple[Path, list[dict]] | Exception] = {}
+    skipped: list[dict] = []
+    done = 0
     for track, vid in plan:
         number = track.get("absoluteTrackNumber") or 0
         base = f"{number:02d} - {safe_name(track['title'])}"
-        if "#" in vid:
-            source_id, chapter = vid.split("#", 1)
-            if source_id not in sources:
-                sources[source_id] = _download_source(source_id, workdir)
-            src, chapters = sources[source_id]
-            c = chapters[int(chapter) - 1]
-            mp3 = workdir / f"{base}.mp3"
-            cmd = ["ffmpeg", "-loglevel", "error", "-y", "-ss", str(c.get("start_time") or 0)]
-            if c.get("end_time"):
-                cmd += ["-to", str(c["end_time"])]
-            cmd += ["-i", str(src), "-vn", "-c:a", "libmp3lame", "-b:a", f"{AUDIO_QUALITY}k", str(mp3)]
-            subprocess.run(cmd, check=True)
-            _update(job, "download", done=next(s for s in job["steps"] if s["key"] == "download")["done"] + 1)
-            files[track["id"]] = mp3
-            _update(job, "convert", state="active", done=len(files))
-            continue
-        opts = {
-            "quiet": True,
-            "noprogress": True,
-            "noplaylist": True,
-            "format": "bestaudio/best",
-            "outtmpl": str(workdir / f"{base}.%(ext)s"),
-            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": AUDIO_QUALITY}],
-        }
-        with YoutubeDL(opts) as ydl:
-            ydl.download([video_url(vid)])
-        _update(job, "download", done=next(s for s in job["steps"] if s["key"] == "download")["done"] + 1)
         mp3 = workdir / f"{base}.mp3"
-        if not mp3.exists():
-            raise RuntimeError(f"Umwandlung fehlgeschlagen: {track['title']}")
+        error: Exception | None = None
+        for attempt in range(3):
+            try:
+                if "#" in vid:
+                    source_id, chapter = vid.split("#", 1)
+                    if source_id not in sources or isinstance(sources[source_id], Exception):
+                        try:
+                            sources[source_id] = _download_source(source_id, workdir)
+                        except Exception as e:
+                            sources[source_id] = e
+                            raise
+                    src, chapters = sources[source_id]  # type: ignore[misc]
+                    c = chapters[int(chapter) - 1]
+                    cmd = ["ffmpeg", "-loglevel", "error", "-y", "-ss", str(c.get("start_time") or 0)]
+                    if c.get("end_time"):
+                        cmd += ["-to", str(c["end_time"])]
+                    cmd += ["-i", str(src), "-vn", "-c:a", "libmp3lame", "-b:a", f"{AUDIO_QUALITY}k", str(mp3)]
+                    subprocess.run(cmd, check=True)
+                else:
+                    opts = ydl_opts(
+                        noplaylist=True,
+                        format="bestaudio/best",
+                        outtmpl=str(workdir / f"{base}.%(ext)s"),
+                        postprocessors=[{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": AUDIO_QUALITY}],
+                    )
+                    with YoutubeDL(opts) as ydl:
+                        ydl.download([video_url(vid)])
+                if not mp3.exists():
+                    raise RuntimeError("Umwandlung in MP3 fehlgeschlagen")
+                error = None
+                break
+            except Exception as e:  # yt-dlp/ffmpeg
+                error = e
+                if "confirm your age" in str(e).lower():
+                    break  # Wiederholen hilft hier nicht
+                time.sleep(5 * (attempt + 1))
+        done += 1
+        _update(job, "download", done=done)
+        if error is not None:
+            log.warning("Titel %s übersprungen: %s", track["title"], error)
+            skipped.append({"title": track["title"], "reason": friendly_error(error)})
+            _update(job, skipped=list(skipped))
+            continue
         files[track["id"]] = mp3
         _update(job, "convert", state="active", done=len(files))
+    if not files:
+        raise RuntimeError(skipped[0]["reason"] if skipped else "Kein Titel konnte geladen werden")
     _update(job, "download", state="done")
     _update(job, "convert", state="done")
 
@@ -358,14 +400,12 @@ def run_job(job: dict) -> None:
         for i, (track, vid) in enumerate(plan, 1):
             base = f"{(track.get('absoluteTrackNumber') or 0):02d} - {safe_name(track['title'])}"
             h = VIDEO_MAX_HEIGHT
-            opts = {
-                "quiet": True,
-                "noprogress": True,
-                "noplaylist": True,
-                "format": f"bv*[height<={h}][ext=mp4]+ba[ext=m4a]/b[height<={h}][ext=mp4]/bv*[height<={h}]+ba/b",
-                "merge_output_format": "mp4",
-                "outtmpl": str(target_dir / f"{base}.%(ext)s"),
-            }
+            opts = ydl_opts(
+                noplaylist=True,
+                format=f"bv*[height<={h}][ext=mp4]+ba[ext=m4a]/b[height<={h}][ext=mp4]/bv*[height<={h}]+ba/b",
+                merge_output_format="mp4",
+                outtmpl=str(target_dir / f"{base}.%(ext)s"),
+            )
             try:
                 with YoutubeDL(opts) as ydl:
                     ydl.download([video_url(vid)])
@@ -384,13 +424,7 @@ def run_job(job: dict) -> None:
 
 def _download_source(video_id: str, workdir: Path) -> tuple[Path, list[dict]]:
     """Lädt die Tonspur eines Kapitel-Videos einmal herunter und liefert sie mit den Kapiteln."""
-    opts = {
-        "quiet": True,
-        "noprogress": True,
-        "noplaylist": True,
-        "format": "bestaudio/best",
-        "outtmpl": str(workdir / f"_src_{video_id}.%(ext)s"),
-    }
+    opts = ydl_opts(noplaylist=True, format="bestaudio/best", outtmpl=str(workdir / f"_src_{video_id}.%(ext)s"))
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(video_url(video_id), download=True)
     chapters = info.get("chapters") or []
@@ -410,7 +444,7 @@ def worker() -> None:
             _update(job, status="done", finishedAt=int(time.time() * 1000))
         except Exception as e:
             log.exception("Job %s fehlgeschlagen", job_id)
-            msg = e.detail if isinstance(e, HTTPException) else str(e)
+            msg = friendly_error(e)
             for s in job["steps"]:
                 if s["state"] == "active":
                     _update(job, s["key"], state="failed")
@@ -481,7 +515,7 @@ class SearchRequest(BaseModel):
 
 
 def _search_flat(url: str, limit: int) -> list[dict]:
-    opts = {"quiet": True, "skip_download": True, "extract_flat": True, "noprogress": True, "playlistend": limit}
+    opts = ydl_opts(skip_download=True, extract_flat=True, playlistend=limit)
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     return [e for e in (info.get("entries") or []) if e][:limit]
@@ -565,6 +599,7 @@ def create_job(req: JobRequest) -> dict:
         "steps": steps,
         "status": "queued",
         "error": None,
+        "skipped": [],
         "createdAt": int(time.time() * 1000),
     }
     with _lock:
@@ -583,6 +618,37 @@ def list_jobs() -> list[dict]:
     with _lock:
         jobs = sorted(_jobs.values(), key=lambda j: j["createdAt"], reverse=True)[:20]
         return [_public(j) for j in jobs]
+
+
+@app.post("/api/jobs/{job_id}/retry", dependencies=[Depends(require_token)])
+def retry_job(job_id: str) -> dict:
+    with _lock:
+        job = _jobs.get(job_id)
+        if not job:
+            raise HTTPException(404, "Job nicht gefunden")
+        if job["status"] in ("queued", "running"):
+            raise HTTPException(409, "Job läuft bereits")
+        for s in job["steps"]:
+            s.update(done=0, state="todo")
+        job.update(status="queued", error=None, skipped=[], createdAt=int(time.time() * 1000))
+    shutil.rmtree(STAGING / job_id, ignore_errors=True)
+    _save_jobs()
+    _queue.put(job_id)
+    return _public(job)
+
+
+@app.delete("/api/jobs/{job_id}", dependencies=[Depends(require_token)])
+def delete_job(job_id: str) -> dict:
+    with _lock:
+        job = _jobs.get(job_id)
+        if not job:
+            raise HTTPException(404, "Job nicht gefunden")
+        if job["status"] in ("queued", "running"):
+            raise HTTPException(409, "Laufende Jobs können nicht entfernt werden")
+        del _jobs[job_id]
+    shutil.rmtree(STAGING / job_id, ignore_errors=True)
+    _save_jobs()
+    return {"ok": True}
 
 
 @app.get("/api/videos/find", dependencies=[Depends(require_token)])
