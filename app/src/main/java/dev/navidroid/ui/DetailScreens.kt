@@ -304,6 +304,7 @@ fun ArtistScreen(app: NaviApp, id: String, nav: NavController) {
                 items(artist.album.sortedByDescending { it.year ?: 0 }, key = { it.id }) { album ->
                     AlbumCard(album) { nav.openAlbum(album.id) }
                 }
+                item(span = { GridItemSpan(maxLineSpan) }, key = "youtube") { YouTubeArtistSection(app, artist.name) }
             }
         }
     }

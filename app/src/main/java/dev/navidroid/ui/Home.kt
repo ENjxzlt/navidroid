@@ -153,7 +153,10 @@ fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit, o
             }
         }
 
-        if (filter != HomeFilter.Mixes) suggestionRows(app, onOpenRequests)
+        if (filter != HomeFilter.Mixes) {
+            suggestionRows(app, onOpenRequests)
+            youtubeReleasesRow(app)
+        }
 
         if (filter != HomeFilter.Mixes && d != null) {
             albumRow("Zuletzt gespielt", d.recent, nav)

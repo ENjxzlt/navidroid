@@ -19,6 +19,7 @@ import urllib.parse
 import logging
 import os
 import queue
+import re
 import shutil
 import threading
 import time
@@ -38,9 +39,10 @@ import ai
 import library
 import ma
 import suggestions
+import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -962,6 +964,159 @@ def create_manual_job(req: ManualJobRequest) -> dict:
     _save_jobs()
     _queue.put(job["id"])
     return _public(job)
+
+
+# ---- YouTube-Veröffentlichungen ----
+
+YT_RELEASES_FILE = DATA_DIR / "youtube_releases.json"
+_yt_lock = threading.Lock()
+_yt_working = threading.Event()
+
+
+def _yt_store() -> dict:
+    return _read_json(YT_RELEASES_FILE, {})
+
+
+def _yt_save(store: dict) -> None:
+    tmp = YT_RELEASES_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(store))
+    tmp.replace(YT_RELEASES_FILE)
+
+
+def _library_artists(files: list[dict]) -> list[str]:
+    """Künstler der Bibliothek, die mit den meisten Titeln zuerst."""
+    counts: dict[str, int] = {}
+    names: dict[str, str] = {}
+    for f in files:
+        a = f.get("albumartist") or f.get("artist")
+        if not a or ytr.norm(a) in ("various artists", "verschiedene interpreten", ""):
+            continue
+        k = ytr.norm(a)
+        counts[k] = counts.get(k, 0) + 1
+        names.setdefault(k, a)
+    return [names[k] for k in sorted(counts, key=lambda k: -counts[k])]
+
+
+def _yt_refresh(only: str | None = None) -> None:
+    try:
+        files = _need_library().files()
+        artists = [only] if only else _library_artists(files)[:40]
+        with _yt_lock:
+            channels = _yt_store().get("channels") or {}
+        found, channels = ytr.scan(artists, files, channels)
+        with _yt_lock:
+            store = _yt_store()
+            per = store.get("perArtist") or {}
+            if not only:
+                per = {}
+            per.update(found)
+            store.update({"perArtist": per, "channels": channels})
+            if not only:
+                store["date"] = time.strftime("%Y-%m-%d")
+            _yt_save(store)
+    except Exception:
+        log.exception("YouTube-Veröffentlichungen: Suche fehlgeschlagen")
+    finally:
+        if not only:
+            _yt_working.clear()
+
+
+def _yt_items(store: dict) -> list[dict]:
+    dismissed = set(store.get("dismissed") or [])
+    per = {a: [i for i in items if i["key"] not in dismissed] for a, items in (store.get("perArtist") or {}).items()}
+    # Ausblenden gilt auch für zusammengefasste Doppelte
+    return [i for i in ytr.interleave(per) if not dismissed.intersection(i.get("alsoKeys") or [])]
+
+
+@app.get("/api/youtube/releases", dependencies=[Depends(require_token)])
+def youtube_releases(artist: str | None = None, refresh: bool = False) -> dict:
+    _need_library()
+    store = _yt_store()
+    stale = store.get("date") != time.strftime("%Y-%m-%d")
+    if (stale or refresh) and not _yt_working.is_set():
+        _yt_working.set()
+        threading.Thread(target=_yt_refresh, daemon=True).start()
+    if artist:
+        k = ytr.norm(artist)
+        dismissed = set(store.get("dismissed") or [])
+        per = store.get("perArtist") or {}
+        items = next((v for a, v in per.items() if ytr.norm(a) == k), None)
+        ch = (store.get("channels") or {}).get(k)
+        if items is None and ch is None and not _yt_working.is_set():
+            _yt_refresh(only=artist)  # Künstler noch nie gesucht: jetzt (dauert ein paar Sekunden)
+            store = _yt_store()
+            items = next((v for a, v in (store.get("perArtist") or {}).items() if ytr.norm(a) == k), None)
+            ch = (store.get("channels") or {}).get(k)
+        return {"working": _yt_working.is_set(), "channel": ch or None,
+                "items": [i for i in (items or []) if i["key"] not in dismissed]}
+    return {"working": _yt_working.is_set(), "items": _yt_items(store)}
+
+
+class KeyRequest(BaseModel):
+    key: str
+
+
+@app.post("/api/youtube/releases/dismiss", dependencies=[Depends(require_token)])
+def youtube_release_dismiss(req: KeyRequest) -> dict:
+    with _yt_lock:
+        store = _yt_store()
+        store["dismissed"] = list(dict.fromkeys((store.get("dismissed") or []) + [req.key]))[-2000:]
+        _yt_save(store)
+    return {"ok": True}
+
+
+class ChannelRequest(BaseModel):
+    artist: str
+    channel: str  # Kanal-Link (…/channel/UC…, …/@name) oder leer = automatisch suchen
+
+
+@app.post("/api/youtube/channel", dependencies=[Depends(require_token)])
+def youtube_set_channel(req: ChannelRequest) -> dict:
+    k = ytr.norm(req.artist)
+    ch: Any = None
+    link = req.channel.strip()
+    if link:
+        m = re.search(r"(UC[0-9A-Za-z_-]{22})", link)
+        if m:
+            ch = {"id": m.group(1), "name": req.artist}
+        else:
+            if not is_youtube_url(link):
+                link = "https://www.youtube.com/@" + link.lstrip("@")
+            try:
+                info = ytr._ydl_extract(link, {"playlistend": 1})
+            except Exception as e:
+                raise HTTPException(400, f"Kanal nicht gefunden: {e}") from e
+            if not info.get("channel_id"):
+                raise HTTPException(400, "Kanal nicht gefunden")
+            ch = {"id": info["channel_id"], "name": info.get("channel") or req.artist}
+    with _yt_lock:
+        store = _yt_store()
+        channels = store.get("channels") or {}
+        if ch is None:
+            channels.pop(k, None)
+        else:
+            channels[k] = ch
+        store["channels"] = channels
+        _yt_save(store)
+    _yt_refresh(only=req.artist)
+    return youtube_releases(artist=req.artist)
+
+
+@app.post("/api/youtube/releases/import", dependencies=[Depends(require_token)])
+def youtube_release_import(req: KeyRequest) -> dict:
+    _need_library()
+    item = next((i for items in (_yt_store().get("perArtist") or {}).values() for i in items
+                 if i["key"] == req.key or req.key in (i.get("alsoKeys") or [])), None)
+    if item is None:
+        raise HTTPException(404, "Veröffentlichung nicht mehr gefunden")
+    meta, entries = playlist_entries(item["url"])
+    if not entries:
+        raise HTTPException(400, "Die Playlist ist leer")
+    tracks = [ManualTrack(videoId=e["id"], title=clean_title(e["title"], item["artist"]) or e["title"], number=e["index"]) for e in entries]
+    return create_manual_job(ManualJobRequest(
+        url=item["url"], artist=(item.get("artists") or [item["artist"]])[0], album=item["title"], year=None,
+        thumbnail=item.get("cover") or meta.get("thumbnail"), tracks=tracks,
+    ))
 
 
 class MaAuth(BaseModel):

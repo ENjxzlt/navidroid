@@ -184,6 +184,23 @@ data class Suggestion(
 data class Suggestions(val forYou: List<Suggestion> = emptyList(), val newReleases: List<Suggestion> = emptyList())
 
 @Serializable
+data class YtRelease(
+    val key: String,
+    val title: String = "",
+    val artist: String = "",
+    val artistLine: String? = null,
+    val cover: String? = null,
+    val url: String = "",
+    val alsoKeys: List<String> = emptyList(),
+)
+
+@Serializable
+data class YtChannel(val id: String = "", val name: String = "")
+
+@Serializable
+data class YtReleases(val working: Boolean = false, val channel: YtChannel? = null, val items: List<YtRelease> = emptyList())
+
+@Serializable
 data class AlbumFilesInfo(val tracks: Int = 0, val bytes: Long = 0, val matched: Int = 0)
 
 @Serializable
@@ -491,6 +508,21 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     suspend fun dismissSuggestion(key: String) {
         send(config(), "POST", "api/suggestions/dismiss", buildJsonObject { put("key", key) }.toString())
     }
+
+    // ---- YouTube-Veröffentlichungen ----
+
+    suspend fun youtubeReleases(artist: String? = null): YtReleases =
+        decode(send(config(), "GET", "api/youtube/releases", query = artist?.let { mapOf("artist" to it) }.orEmpty(), client = slowHttp))
+
+    suspend fun dismissYoutubeRelease(key: String) {
+        send(config(), "POST", "api/youtube/releases/dismiss", buildJsonObject { put("key", key) }.toString())
+    }
+
+    suspend fun importYoutubeRelease(key: String): HelperJob =
+        decode(send(config(), "POST", "api/youtube/releases/import", buildJsonObject { put("key", key) }.toString(), client = slowHttp))
+
+    suspend fun setYoutubeChannel(artist: String, channel: String): YtReleases =
+        decode(send(config(), "POST", "api/youtube/channel", buildJsonObject { put("artist", artist); put("channel", channel) }.toString(), client = slowHttp))
 
     // ---- Bibliothek bearbeiten ----
 
