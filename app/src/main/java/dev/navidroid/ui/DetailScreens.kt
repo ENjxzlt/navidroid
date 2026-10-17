@@ -58,6 +58,7 @@ import kotlinx.coroutines.launch
 @Composable
 private fun TintedHeader(
     coverUrl: String?,
+    alternative: CoverAlternative?,
     overline: String,
     title: String,
     subtitle: String?,
@@ -69,7 +70,7 @@ private fun TintedHeader(
     starred: Boolean? = null,
     onToggleStar: () -> Unit = {},
 ) {
-    val tint = rememberCoverTint(coverUrl)
+    val tint = rememberCoverTint(coverUrl, alternative = alternative)
     val soft = mutedOn(tint)
     Column(
         Modifier.fillMaxWidth().background(tint).statusBarsPadding().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
@@ -80,6 +81,7 @@ private fun TintedHeader(
             CoverImage(
                 coverUrl,
                 Modifier.size(132.dp).shadow(16.dp, RoundedCornerShape(14.dp)).clip(RoundedCornerShape(14.dp)),
+                alternative,
             )
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(overline, style = MaterialTheme.typography.labelSmall, color = soft)
@@ -152,12 +154,16 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
             val album = s.value
             var starred by remember(album.id) { mutableStateOf(album.starred != null) }
             val cover = remember(album.coverArt) { app.client.coverArtUrl(album.coverArt, 600) }
+            val alternative: CoverAlternative? = remember(album.id) {
+                album.musicBrainzId?.let { mbid -> { app.covers.forMbid(mbid, 500) } }
+            }
             val multiDisc = album.song.mapNotNull { it.discNumber }.distinct().size > 1
-            CoverAccentTheme(cover) {
+            CoverAccentTheme(cover, alternative) {
             LazyColumn(Modifier.fillMaxSize().background(Navi.Bg), contentPadding = PaddingValues(bottom = 16.dp)) {
                 item {
                     TintedHeader(
                         coverUrl = cover,
+                        alternative = alternative,
                         overline = listOfNotNull("ALBUM", album.year?.takeIf { it > 0 }?.toString()).joinToString(" · "),
                         title = album.name,
                         subtitle = album.artist,
@@ -203,6 +209,7 @@ fun PlaylistScreen(app: NaviApp, id: String, nav: NavController) {
                 item {
                     TintedHeader(
                         coverUrl = cover,
+                        alternative = null,
                         overline = "PLAYLIST",
                         title = pl.name,
                         subtitle = pl.comment?.takeIf { it.isNotBlank() } ?: pl.owner,

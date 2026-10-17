@@ -53,6 +53,7 @@ data class Album(
     val duration: Int = 0,
     val year: Int? = null,
     val starred: String? = null,
+    val musicBrainzId: String? = null,
     val song: List<Song> = emptyList(),
 )
 

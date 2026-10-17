@@ -66,7 +66,8 @@ private val LyricStyle @Composable get() = MaterialTheme.typography.headlineLarg
 fun LyricsScreen(app: NaviApp, onClose: () -> Unit) {
     val player = LocalPlayer.current
     val s by player.state.collectAsStateWithLifecycle()
-    val tint = rememberCoverTint(s.artworkUri, fallback = Navi.Surface)
+    val coverAlternative = albumCoverAlternative(s.albumId)
+    val tint = rememberCoverTint(s.artworkUri, fallback = Navi.Surface, alternative = coverAlternative)
     val soft = mutedOn(tint)
 
     var lyrics by remember { mutableStateOf<Load<Lyrics?>>(Load.Loading) }
@@ -82,7 +83,7 @@ fun LyricsScreen(app: NaviApp, onClose: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            CoverImage(s.artworkUri, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)))
+            CoverImage(s.artworkUri, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)), coverAlternative)
             Column(Modifier.weight(1f)) {
                 Text(s.title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(s.artist.orEmpty(), style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = soft, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -58,7 +58,7 @@ fun NaviRoot(app: NaviApp) {
     val showMini = playerState.hasItem && route != null && !fullScreen
 
     // Die Akzentfarbe der ganzen App folgt dem Cover des laufenden Titels.
-    CoverAccentTheme(playerState.artworkUri) {
+    CoverAccentTheme(playerState.artworkUri, albumCoverAlternative(playerState.albumId)) {
     Scaffold(
         containerColor = Navi.Bg,
         bottomBar = {

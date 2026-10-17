@@ -96,7 +96,7 @@ fun MiniPlayer(state: PlayerUiState, onOpen: () -> Unit, modifier: Modifier = Mo
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                CoverImage(state.artworkUri, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)))
+                CoverImage(state.artworkUri, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)), albumCoverAlternative(state.albumId))
                 Column(Modifier.weight(1f)) {
                     Text(state.title, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(state.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -180,7 +180,8 @@ fun PlayPauseButton(state: PlayerUiState, background: Color, size: Int) {
 fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (String) -> Unit, onOpenArtist: (String) -> Unit) {
     val player = LocalPlayer.current
     val s by player.state.collectAsStateWithLifecycle()
-    val tint = rememberCoverTint(s.artworkUri, fallback = Navi.Surface)
+    val coverAlternative = albumCoverAlternative(s.albumId)
+    val tint = rememberCoverTint(s.artworkUri, fallback = Navi.Surface, alternative = coverAlternative)
     val soft = mutedOn(tint)
     val accent = MaterialTheme.colorScheme.primary
     var showQueue by remember { mutableStateOf(false) }
@@ -247,6 +248,7 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
                 CoverImage(
                     s.artworkUri,
                     Modifier.aspectRatio(1f).shadow(24.dp, RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp)),
+                    coverAlternative,
                 )
             }
         }

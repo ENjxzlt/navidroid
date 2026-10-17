@@ -48,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -203,18 +204,24 @@ private fun coverColors(palette: Palette): CoverColors? {
     return CoverColors(tint, accent)
 }
 
+/** Ersatzquelle für ein Cover, die erst bei Bedarf ermittelt wird (z. B. Cover Art Archive). */
+typealias CoverAlternative = suspend () -> Any?
+
 /** Lädt das Cover klein und berechnet seine Farben; Ergebnisse werden zwischengespeichert. */
 @Composable
-fun rememberCoverColors(model: Any?): CoverColors? {
+fun rememberCoverColors(model: Any?, alternative: CoverAlternative? = null): CoverColors? {
     val context = LocalContext.current
     val key = model?.toString()
     var colors by remember(key) { mutableStateOf(key?.let { coverColorCache.get(it) }) }
     LaunchedEffect(key) {
-        if (key == null || colors != null) return@LaunchedEffect
-        val request = ImageRequest.Builder(context).data(model).size(96).allowHardware(false).build()
-        val bitmap = (context.imageLoader.execute(request).drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
+        if (colors != null) return@LaunchedEffect
+        suspend fun bitmapOf(data: Any?) = data?.let {
+            val request = ImageRequest.Builder(context).data(it).size(96).allowHardware(false).build()
+            (context.imageLoader.execute(request).drawable as? BitmapDrawable)?.bitmap
+        }
+        val bitmap = bitmapOf(model) ?: alternative?.let { bitmapOf(it()) } ?: return@LaunchedEffect
         val computed = withContext(Dispatchers.Default) { coverColors(Palette.from(bitmap).generate()) } ?: return@LaunchedEffect
-        coverColorCache.put(key, computed)
+        if (key != null) coverColorCache.put(key, computed)
         colors = computed
     }
     return colors
@@ -222,13 +229,13 @@ fun rememberCoverColors(model: Any?): CoverColors? {
 
 /** Dunkle, aus dem Cover gewonnene Hintergrundfarbe, auf der weißer Text gut lesbar bleibt. */
 @Composable
-fun rememberCoverTint(model: Any?, fallback: Color = Navi.Surface): Color =
-    animateColorAsState(rememberCoverColors(model)?.tint ?: fallback, tween(500), label = "coverTint").value
+fun rememberCoverTint(model: Any?, fallback: Color = Navi.Surface, alternative: CoverAlternative? = null): Color =
+    animateColorAsState(rememberCoverColors(model, alternative)?.tint ?: fallback, tween(500), label = "coverTint").value
 
 /** Setzt die Akzentfarbe des Themes auf die Farbe des Covers (mit sanftem Übergang). */
 @Composable
-fun CoverAccentTheme(model: Any?, content: @Composable () -> Unit) {
-    val accent by animateColorAsState(rememberCoverColors(model)?.accent ?: Navi.Accent, tween(600), label = "coverAccent")
+fun CoverAccentTheme(model: Any?, alternative: CoverAlternative? = null, content: @Composable () -> Unit) {
+    val accent by animateColorAsState(rememberCoverColors(model, alternative)?.accent ?: Navi.Accent, tween(600), label = "coverAccent")
     val scheme = MaterialTheme.colorScheme.copy(
         primary = accent,
         secondary = accent,
@@ -381,25 +388,44 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier, action: (@Compos
 }
 
 @Composable
-fun CoverArt(id: String?, size: Int, modifier: Modifier = Modifier) {
+fun CoverArt(id: String?, size: Int, modifier: Modifier = Modifier, alternative: CoverAlternative? = null) {
     val app = LocalContext.current.applicationContext as NaviApp
     val url = remember(id, size) { app.client.coverArtUrl(id, size) }
-    CoverImage(url, modifier)
+    CoverImage(url, modifier, alternative)
 }
 
+/** Cover mit Platzhalter; schlägt das Laden fehl, wird einmal die [alternative] Quelle versucht. */
 @Composable
-fun CoverImage(model: Any?, modifier: Modifier = Modifier) {
+fun CoverImage(model: Any?, modifier: Modifier = Modifier, alternative: CoverAlternative? = null) {
+    val scope = rememberCoroutineScope()
+    var current by remember(model) { mutableStateOf(model) }
+    var triedAlternative by remember(model) { mutableStateOf(false) }
+    val useAlternative = {
+        if (!triedAlternative && alternative != null) {
+            triedAlternative = true
+            scope.launch { alternative()?.let { current = it } }
+        }
+    }
+    LaunchedEffect(model) { if (model == null) useAlternative() }
     Box(modifier.background(Navi.Surface2), contentAlignment = Alignment.Center) {
         Icon(Icons.Rounded.MusicNote, null, tint = Navi.Muted.copy(alpha = 0.4f))
-        if (model != null) {
+        if (current != null) {
             AsyncImage(
-                model = model,
+                model = current,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                onError = { useAlternative() },
                 modifier = Modifier.matchParentSize(),
             )
         }
     }
+}
+
+/** Ersatz-Cover für Titel: über das Album des Titels (nur bei Bedarf nachgeschlagen). */
+@Composable
+fun albumCoverAlternative(albumId: String?): CoverAlternative? {
+    val app = LocalContext.current.applicationContext as NaviApp
+    return remember(albumId) { albumId?.let { id -> { app.covers.forAlbum(id) } } }
 }
 
 @Composable
@@ -408,7 +434,11 @@ fun AlbumCard(album: Album, modifier: Modifier = Modifier, onClick: () -> Unit) 
         modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        CoverArt(album.coverArt, 300, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(14.dp)))
+        val app = LocalContext.current.applicationContext as NaviApp
+        val alternative: CoverAlternative? = remember(album.id) {
+            album.musicBrainzId?.let { mbid -> { app.covers.forMbid(mbid, 250) } }
+        }
+        CoverArt(album.coverArt, 300, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(14.dp)), alternative)
         Column(Modifier.padding(bottom = 4.dp)) {
             Text(album.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
@@ -447,7 +477,7 @@ fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boo
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         when {
-            showCover -> CoverArt(song.coverArt, 300, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)))
+            showCover -> CoverArt(song.coverArt, 300, Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)), albumCoverAlternative(song.albumId))
             current -> Box(Modifier.width(24.dp), contentAlignment = Alignment.Center) {
                 Icon(Icons.Rounded.GraphicEq, "Läuft gerade", tint = accent, modifier = Modifier.size(18.dp))
             }
