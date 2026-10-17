@@ -13,7 +13,7 @@ Android-Client für [Navidrome](https://www.navidrome.org/) (Subsonic-API), gesc
 - Synchronisierte Songtexte, die Wort für Wort mitlaufen (von Navidrome; optional ergänzt über
   [LRCLIB](https://lrclib.net), abschaltbar im Menü auf der Startseite)
 - Favoriten für Titel und Alben
-- Fehlt in Navidrome ein Cover, lädt die App es über die MusicBrainz-ID aus dem
+- Fehlt in Navidrome ein Cover, lädt die App es über MusicBrainz (ID oder Suche nach Album und Künstler) aus dem
   [Cover Art Archive](https://coverartarchive.org)
 - Scrobbling an Navidrome („Spielt gerade“ + nach halber Laufzeit)
 - Musik anfordern über [Lidarr](https://lidarr.audio/): Alben oder ganze Künstler suchen und hinzufügen,

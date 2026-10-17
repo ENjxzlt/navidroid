@@ -435,8 +435,8 @@ fun AlbumCard(album: Album, modifier: Modifier = Modifier, onClick: () -> Unit) 
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val app = LocalContext.current.applicationContext as NaviApp
-        val alternative: CoverAlternative? = remember(album.id) {
-            album.musicBrainzId?.let { mbid -> { app.covers.forMbid(mbid, 250) } }
+        val alternative: CoverAlternative = remember(album.id) {
+            { app.covers.forAlbumInfo(album.musicBrainzId, album.name, album.artist, 250) }
         }
         CoverArt(album.coverArt, 300, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(14.dp)), alternative)
         Column(Modifier.padding(bottom = 4.dp)) {

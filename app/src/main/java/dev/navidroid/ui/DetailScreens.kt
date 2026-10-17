@@ -154,8 +154,8 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
             val album = s.value
             var starred by remember(album.id) { mutableStateOf(album.starred != null) }
             val cover = remember(album.coverArt) { app.client.coverArtUrl(album.coverArt, 600) }
-            val alternative: CoverAlternative? = remember(album.id) {
-                album.musicBrainzId?.let { mbid -> { app.covers.forMbid(mbid, 500) } }
+            val alternative: CoverAlternative = remember(album.id) {
+                { app.covers.forAlbumInfo(album.musicBrainzId, album.name, album.artist, 500) }
             }
             val multiDisc = album.song.mapNotNull { it.discNumber }.distinct().size > 1
             CoverAccentTheme(cover, alternative) {

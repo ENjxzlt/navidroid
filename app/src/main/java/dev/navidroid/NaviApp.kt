@@ -44,7 +44,7 @@ class NaviApp : Application(), ImageLoaderFactory {
         session = SessionStore(this)
         client = SubsonicClient(http, session)
         lyrics = LyricsRepository(this, http, client)
-        covers = CoverFallback(client)
+        covers = CoverFallback(client, http)
         lidarrStore = LidarrStore(this)
         lidarr = LidarrClient(http, lidarrStore)
         helperStore = HelperStore(this)
