@@ -39,6 +39,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
@@ -111,7 +113,9 @@ import android.widget.Toast
 enum class RequestMode(val label: String) { Albums("Alben"), Artists("Künstler"), Downloads("Downloads") }
 
 /** Offenes YouTube-Import-Blatt; ohne Album wählt man das Album nach dem Einfügen des Links. */
-data class ImportTarget(val album: LidarrAlbum?)
+data class ImportTarget(val album: LidarrAlbum?, val albumId: Int? = album?.takeIf { it.inLibrary }?.id)
+
+private enum class ImportMode(val label: String) { Search("Suchen"), Link("Link einfügen") }
 
 class RequestsVm(private val lidarr: LidarrClient, private val helper: HelperClient) : ViewModel() {
     var mode by mutableStateOf(RequestMode.Albums)
@@ -127,6 +131,8 @@ class RequestsVm(private val lidarr: LidarrClient, private val helper: HelperCli
     var helperJobs by mutableStateOf<List<HelperJob>>(emptyList())
         private set
     var importTarget by mutableStateOf<ImportTarget?>(null)
+        private set
+    var choiceFor by mutableStateOf<LidarrAlbum?>(null)
         private set
     var startingImport by mutableStateOf(false)
         private set
@@ -188,6 +194,43 @@ class RequestsVm(private val lidarr: LidarrClient, private val helper: HelperCli
 
     fun openImport(album: LidarrAlbum?) {
         importTarget = ImportTarget(album)
+    }
+
+    /** "Anfordern" bei einem Album, das noch nicht in Lidarr ist: Quelle wählen bzw. gemerkte Wahl nutzen. */
+    fun request(album: LidarrAlbum) {
+        when (if (helper.configured) helper.requestSource else RequestSource.Lidarr) {
+            RequestSource.Lidarr -> requestAlbum(album)
+            RequestSource.YouTube -> requestViaYouTube(album)
+            RequestSource.Ask -> choiceFor = album
+        }
+    }
+
+    fun dismissChoice() {
+        choiceFor = null
+    }
+
+    fun choose(album: LidarrAlbum, source: RequestSource, remember: Boolean) {
+        choiceFor = null
+        if (remember) helper.requestSource = source
+        if (source == RequestSource.YouTube) requestViaYouTube(album) else requestAlbum(album)
+    }
+
+    /** Album in Lidarr anlegen, ohne dass Lidarr selbst sucht, und gleich die YouTube-Suche öffnen. */
+    private fun requestViaYouTube(album: LidarrAlbum) {
+        if (busy[album.foreignId] == true) return
+        busy[album.foreignId] = true
+        viewModelScope.launch {
+            try {
+                val id = lidarr.requestAlbum(album, search = false)
+                importTarget = ImportTarget(album, id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                messages.tryEmit(e.message ?: "Album konnte nicht angelegt werden")
+            } finally {
+                busy.remove(album.foreignId)
+            }
+        }
     }
 
     fun closeImport() {
@@ -362,6 +405,7 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
     }
 
     vm.importTarget?.let { target -> YouTubeImportSheet(app, vm, target) }
+    vm.choiceFor?.let { album -> RequestChoiceSheet(album, vm) }
 
     confirmArtist?.let { artist ->
         AlertDialog(
@@ -453,7 +497,7 @@ private fun AlbumResult(vm: RequestsVm, album: LidarrAlbum, helperReady: Boolean
                     else -> null
                 },
                 actionLabel = if (album.inLibrary) "Suchen" else "Anfordern",
-                onAction = { vm.requestAlbum(album) },
+                onAction = { if (album.inLibrary) vm.requestAlbum(album) else vm.request(album) },
             )
         },
     )
@@ -703,6 +747,67 @@ private fun HelperJobCard(job: HelperJob) {
     }
 }
 
+// ---- Quelle wählen ----
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RequestChoiceSheet(album: LidarrAlbum, vm: RequestsVm) {
+    var remember by remember { mutableStateOf(false) }
+    ModalBottomSheet(onDismissRequest = vm::dismissChoice, containerColor = Navi.Surface) {
+        Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                RemoteCover(album.imageUrl, Modifier.size(64.dp).clip(RoundedCornerShape(12.dp)))
+                Column {
+                    Text("ANFORDERN", style = MaterialTheme.typography.labelSmall, color = Navi.Muted)
+                    Text(album.title, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(listOfNotNull(album.artistName, album.year).joinToString(" · "), style = MaterialTheme.typography.bodyMedium, color = Navi.Muted)
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SourceOption(
+                    icon = Icons.Rounded.Download,
+                    title = "Über Lidarr",
+                    text = "Sucht bei deinen Indexern, beste Qualität (z. B. FLAC). Kann dauern.",
+                    highlighted = true,
+                ) { vm.choose(album, RequestSource.Lidarr, remember) }
+                SourceOption(
+                    icon = Icons.Rounded.SmartDisplay,
+                    title = "Direkt auf YouTube suchen",
+                    text = "Sofort verfügbar, als MP3 320 kbit/s. Lidarr erkennt das Album danach.",
+                    highlighted = false,
+                ) { vm.choose(album, RequestSource.YouTube, remember) }
+            }
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { remember = !remember }.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(checked = remember, onCheckedChange = { remember = it })
+                Text("Auswahl merken und nicht mehr fragen", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = Color(0xFFC9CDD4))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceOption(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, text: String, highlighted: Boolean, onClick: () -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    Surface(onClick = onClick, shape = RoundedCornerShape(18.dp), color = Navi.Surface2, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(
+                Modifier.size(44.dp).clip(CircleShape).background(if (highlighted) accent else Navi.Outline),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, null, tint = if (highlighted) MaterialTheme.colorScheme.onPrimary else accent)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.ExtraBold))
+                Text(text, style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+            }
+            Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Navi.Faint)
+        }
+    }
+}
+
 // ---- YouTube-Import ----
 
 private val bracketNoise = Regex("""[\(\[][^\)\]]*[\)\]]""")
@@ -714,7 +819,23 @@ private fun YouTubeImportSheet(app: NaviApp, vm: RequestsVm, target: ImportTarge
     val clipboard = LocalClipboardManager.current
     val accent = MaterialTheme.colorScheme.primary
     var link by rememberSaveable { mutableStateOf("") }
-    var albumId by remember { mutableStateOf(target.album?.takeIf { it.inLibrary }?.id) }
+    var albumId by remember { mutableStateOf(target.albumId) }
+    var mode by remember { mutableStateOf(if (target.albumId != null) ImportMode.Search else ImportMode.Link) }
+    val initialQuery = target.album?.let { "${it.artistName} ${it.title}".trim() }.orEmpty()
+    var query by rememberSaveable { mutableStateOf(initialQuery) }
+    var submitted by remember { mutableStateOf(initialQuery) }
+    var results by remember { mutableStateOf<Load<List<SearchHit>>?>(null) }
+    LaunchedEffect(submitted, albumId, mode) {
+        if (mode != ImportMode.Search || albumId == null || submitted.isBlank()) return@LaunchedEffect
+        results = Load.Loading
+        results = try {
+            Load.Ok(app.helper.search(submitted, albumId))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Load.Err(e.message ?: "YouTube-Suche fehlgeschlagen")
+        }
+    }
     var preview by remember { mutableStateOf<Load<HelperPreview>?>(null) }
     var candidates by remember { mutableStateOf<Load<List<LidarrAlbum>>?>(null) }
     var choosing by remember { mutableStateOf(false) }
@@ -767,6 +888,65 @@ private fun YouTubeImportSheet(app: NaviApp, vm: RequestsVm, target: ImportTarge
                     }
                 }
             }
+            if (albumId != null) {
+                item {
+                    SegmentedControl(
+                        options = ImportMode.entries.map { it to it.label },
+                        selected = mode,
+                        onSelect = { mode = it },
+                    )
+                }
+            }
+            if (mode == ImportMode.Search && albumId != null) {
+                item {
+                    SearchField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = "Künstler und Album",
+                    )
+                    Surface(
+                        onClick = { submitted = query.trim() },
+                        enabled = query.isNotBlank(),
+                        shape = RoundedCornerShape(22.dp),
+                        color = Navi.Surface2,
+                        modifier = Modifier.padding(top = 8.dp).fillMaxWidth().height(44.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text("Auf YouTube suchen", style = MaterialTheme.typography.labelLarge, color = Navi.Text)
+                        }
+                    }
+                }
+                when (val r = results) {
+                    null -> Unit
+                    Load.Loading -> item {
+                        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Text("Suche Playlists und Alben-Videos …", style = MaterialTheme.typography.bodySmall, color = Navi.Muted, modifier = Modifier.padding(top = 12.dp))
+                        }
+                    }
+                    is Load.Err -> item { Text(r.message, color = MaterialTheme.colorScheme.error) }
+                    is Load.Ok -> {
+                        if (r.value.isEmpty()) item {
+                            Text("Nichts Passendes gefunden. Probier einen anderen Suchbegriff oder füge einen Link ein.", color = Navi.Muted, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        itemsIndexed(r.value, key = { _, h -> h.url }) { i, hit ->
+                            SearchHitCard(hit, best = i == 0 && hit.matched > 0) {
+                                link = hit.url
+                                mode = ImportMode.Link
+                            }
+                        }
+                    }
+                }
+                item {
+                    Text(
+                        "Nur Inhalte importieren, die du nutzen darfst.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Navi.Faint,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            } else {
             item {
                 OutlinedTextField(
                     value = link,
@@ -918,6 +1098,64 @@ private fun YouTubeImportSheet(app: NaviApp, vm: RequestsVm, target: ImportTarge
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                             )
                         }
+                    }
+                }
+            }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchHitCard(hit: SearchHit, best: Boolean, onClick: () -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (best) Navi.Surface2 else Color.Transparent,
+        border = BorderStroke(1.dp, if (best) accent else Navi.Outline),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.size(width = 104.dp, height = 58.dp).clip(RoundedCornerShape(8.dp)).background(Navi.Outline)) {
+                hit.thumbnail?.let { AsyncImage(it, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize()) }
+                Box(
+                    Modifier.align(Alignment.BottomEnd).padding(4.dp).clip(RoundedCornerShape(4.dp)).background(Color.Black.copy(alpha = 0.75f)).padding(horizontal = 5.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        if (hit.kind == "chapters") "${hit.count} Kapitel" else "${hit.count} Videos",
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = MaterialTheme.typography.bodySmall.letterSpacing),
+                        color = Color.White,
+                    )
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(hit.title, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    listOfNotNull(
+                        if (hit.kind == "chapters") "Video mit Kapiteln" else "Playlist",
+                        hit.uploader,
+                        if (hit.durationSec > 0) "${hit.durationSec / 60} Min." else null,
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Navi.Muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (hit.total > 0) {
+                    val label = buildString {
+                        if (best) append("Beste Übereinstimmung · ")
+                        append("${hit.matched}/${hit.total} Titel")
+                        if (hit.extra > 0) append(" · ${hit.extra} übrig")
+                    }
+                    Box(
+                        Modifier.clip(RoundedCornerShape(11.dp)).background(if (best) accent else Navi.Outline).padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = MaterialTheme.typography.bodySmall.letterSpacing),
+                            color = if (best) MaterialTheme.colorScheme.onPrimary else Color(0xFFC9CDD4),
+                        )
                     }
                 }
             }
@@ -1100,6 +1338,16 @@ fun LidarrSettingsDialog(app: NaviApp, onDismiss: () -> Unit, onChanged: () -> U
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Musikvideos im Player", modifier = Modifier.weight(1f))
                     Switch(checked = helperVideos, onCheckedChange = { helperVideos = it })
+                }
+                var source by remember { mutableStateOf(app.helper.requestSource) }
+                Column {
+                    Text("Beim Anfordern", style = MaterialTheme.typography.labelMedium, color = Navi.Muted)
+                    SegmentedControl(
+                        options = listOf(RequestSource.Ask to "Fragen", RequestSource.Lidarr to "Lidarr", RequestSource.YouTube to "YouTube"),
+                        selected = source,
+                        onSelect = { source = it; app.helper.requestSource = it },
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
                 OutlinedButton(
                     onClick = {

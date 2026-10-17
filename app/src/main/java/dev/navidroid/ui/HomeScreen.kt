@@ -30,6 +30,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AddBox
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -425,23 +429,105 @@ private fun ArtistsList(app: NaviApp, nav: NavController) {
 
 @Composable
 private fun PlaylistsList(app: NaviApp, nav: NavController) {
-    val loader = rememberLoad("playlists") { app.client.playlists() }
+    val loader = rememberLoad("playlists:${PlaylistBus.version}") { app.client.playlists() }
+    val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var creating by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<dev.navidroid.data.Playlist?>(null) }
+    var deleting by remember { mutableStateOf<dev.navidroid.data.Playlist?>(null) }
+
+    fun act(block: suspend () -> Unit) {
+        scope.launch {
+            try {
+                block()
+                PlaylistBus.changed()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, e.message ?: "Fehler", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     LoadContent(loader) { playlists ->
-        if (playlists.isEmpty()) return@LoadContent EmptyHint("Keine Playlists vorhanden")
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-            items(playlists, key = { it.id }) { pl ->
+            item {
                 Row(
-                    Modifier.fillMaxWidth().clickable { nav.openPlaylist(pl.id) }.padding(horizontal = 20.dp, vertical = 8.dp),
+                    Modifier.fillMaxWidth().clickable { creating = true }.padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Box(
+                        Modifier.size(60.dp).clip(RoundedCornerShape(10.dp))
+                            .border(1.5.dp, Color(0xFF3A3F48), RoundedCornerShape(10.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Add, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("Neue Playlist", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold))
+                        Text("Titel fügst du über ⋮ → „Zur Playlist hinzufügen“ hinzu", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+                    }
+                }
+            }
+            if (playlists.isEmpty()) item { Text("Noch keine Playlists.", color = Navi.Muted, modifier = Modifier.padding(20.dp)) }
+            items(playlists, key = { it.id }) { pl ->
+                var menu by remember { mutableStateOf(false) }
+                Row(
+                    Modifier.fillMaxWidth().clickable { nav.openPlaylist(pl.id) }.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     CoverArt(pl.coverArt, 300, Modifier.size(60.dp).clip(RoundedCornerShape(10.dp)))
                     Column(Modifier.weight(1f)) {
                         Text(pl.name, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("${pl.songCount} Titel · ${formatLong(pl.duration)}", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+                        Text(
+                            listOfNotNull("${pl.songCount} Titel", pl.duration.takeIf { it > 0 }?.let(::formatLong)).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Navi.Muted,
+                        )
+                    }
+                    Box {
+                        androidx.compose.material3.IconButton(onClick = { menu = true }) {
+                            Icon(Icons.Rounded.MoreVert, "Optionen", tint = Navi.Faint)
+                        }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text("Bearbeiten") }, onClick = { menu = false; nav.editPlaylist(pl.id) })
+                            DropdownMenuItem(text = { Text("Umbenennen") }, onClick = { menu = false; renaming = pl })
+                            DropdownMenuItem(text = { Text("Löschen", color = MaterialTheme.colorScheme.error) }, onClick = { menu = false; deleting = pl })
+                        }
                     }
                 }
             }
+        }
+    }
+
+    if (creating) {
+        PlaylistNameDialog("Neue Playlist", "", "Erstellen", onDismiss = { creating = false }) { name ->
+            creating = false
+            scope.launch {
+                try {
+                    val pl = app.client.createPlaylist(name, emptyList())
+                    PlaylistBus.changed()
+                    pl?.id?.let { nav.openPlaylist(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, e.message ?: "Fehler", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    renaming?.let { pl ->
+        PlaylistNameDialog("Playlist umbenennen", pl.name, "Speichern", onDismiss = { renaming = null }) { name ->
+            renaming = null
+            act { app.client.updatePlaylist(pl.id, name = name) }
+        }
+    }
+    deleting?.let { pl ->
+        DeletePlaylistDialog(pl.name, onDismiss = { deleting = null }) {
+            deleting = null
+            act { app.client.deletePlaylist(pl.id) }
         }
     }
 }

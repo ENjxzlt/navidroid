@@ -94,6 +94,7 @@ object Routes {
     const val ALBUM = "album/{id}"
     const val ARTIST = "artist/{id}"
     const val PLAYLIST = "playlist/{id}"
+    const val PLAYLIST_EDIT = "playlist/{id}/edit"
     const val PLAYER = "player"
     const val LYRICS = "lyrics"
 }
@@ -101,6 +102,7 @@ object Routes {
 fun NavController.openAlbum(id: String) = navigate("album/$id")
 fun NavController.openArtist(id: String) = navigate("artist/$id")
 fun NavController.openPlaylist(id: String) = navigate("playlist/$id")
+fun NavController.editPlaylist(id: String) = navigate("playlist/$id/edit")
 
 // ---- Laden mit Zustand, der Navigation überlebt ----
 
@@ -512,6 +514,13 @@ fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boo
                         player.playNext(listOf(song))
                         menu = false
                         Toast.makeText(context, "Wird als Nächstes gespielt", Toast.LENGTH_SHORT).show()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Zur Playlist hinzufügen …") },
+                    onClick = {
+                        menu = false
+                        addToPlaylist(listOf(song), song.title, song.artist.orEmpty(), song.coverArt)
                     },
                 )
                 DropdownMenuItem(

@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
@@ -222,6 +223,21 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
             Box {
                 RoundIconButton(Icons.Rounded.MoreHoriz, "Weitere Optionen", { menu = true }, container = Color.White.copy(alpha = 0.08f))
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    s.mediaId?.let { songId ->
+                        DropdownMenuItem(
+                            text = { Text("Zur Playlist hinzufügen …") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, null) },
+                            onClick = {
+                                menu = false
+                                addToPlaylist(
+                                    listOf(dev.navidroid.data.Song(id = songId, title = s.title, artist = s.artist, album = s.album, albumId = s.albumId)),
+                                    s.title,
+                                    s.artist.orEmpty(),
+                                    null,
+                                )
+                            },
+                        )
+                    }
                     s.albumId?.let { id ->
                         DropdownMenuItem(
                             text = { Text("Zum Album") },

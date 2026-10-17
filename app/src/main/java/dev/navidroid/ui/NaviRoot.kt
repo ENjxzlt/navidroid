@@ -53,8 +53,9 @@ fun NaviRoot(app: NaviApp) {
     val updates: UpdateVm = viewModel { UpdateVm(Updater(app, app.http)) }
     LaunchedEffect(Unit) { updates.checkOnStart() }
     UpdateDialog(updates)
+    PlaylistBus.addRequest?.let { AddToPlaylistSheet(app, it) }
 
-    val fullScreen = route == Routes.PLAYER || route == Routes.LYRICS || route == Routes.LOGIN
+    val fullScreen = route == Routes.PLAYER || route == Routes.LYRICS || route == Routes.LOGIN || route == Routes.PLAYLIST_EDIT
     val showMini = playerState.hasItem && route != null && !fullScreen
 
     // Die Akzentfarbe der ganzen App folgt dem Cover des laufenden Titels.
@@ -127,6 +128,17 @@ fun NaviRoot(app: NaviApp) {
             composable(Routes.ALBUM) { e -> AlbumScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.ARTIST) { e -> ArtistScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.PLAYLIST) { e -> PlaylistScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
+            composable(Routes.PLAYLIST_EDIT) { e ->
+                PlaylistEditScreen(
+                    app,
+                    e.arguments?.getString("id").orEmpty(),
+                    nav,
+                    onAddTracks = {
+                        tab = HomeTab.Search
+                        nav.popBackStack(Routes.HOME, inclusive = false)
+                    },
+                )
+            }
             composable(Routes.PLAYER) {
                 PlayerScreen(
                     onClose = { nav.popBackStack() },

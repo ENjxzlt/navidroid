@@ -18,7 +18,9 @@ Android-Client für [Navidrome](https://www.navidrome.org/) (Subsonic-API), gesc
 - Scrobbling an Navidrome („Spielt gerade“ + nach halber Laufzeit)
 - Musik anfordern über [Lidarr](https://lidarr.audio/): Alben oder ganze Künstler suchen und hinzufügen,
   Downloads verfolgen (Tab „Anfragen“; benötigt Lidarr-URL und API-Key)
-- Fehlende Alben aus YouTube-Playlists holen (über den optionalen YouTube-Helfer, siehe unten)
+- Playlists anlegen, umbenennen, sortieren (Ziehen), Titel hinzufügen/entfernen, löschen – gespeichert in Navidrome
+- Beim Anfordern Quelle wählen: Lidarr oder direkt YouTube; YouTube-Suche mit Abgleich der Album-Titel
+- Fehlende Alben aus YouTube-Playlists oder „Full Album“-Videos mit Kapiteln holen (optionaler YouTube-Helfer, siehe unten)
 - Optionale Musikvideos im Player (stumm und synchron zum Song)
 - In-App-Updates über GitHub Releases
 

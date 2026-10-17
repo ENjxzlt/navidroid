@@ -27,6 +27,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Shuffle
@@ -69,6 +71,8 @@ private fun TintedHeader(
     onSubtitleClick: (() -> Unit)? = null,
     starred: Boolean? = null,
     onToggleStar: () -> Unit = {},
+    onAddToPlaylist: (() -> Unit)? = null,
+    onEdit: (() -> Unit)? = null,
 ) {
     val tint = rememberCoverTint(coverUrl, alternative = alternative)
     val soft = mutedOn(tint)
@@ -112,6 +116,8 @@ private fun TintedHeader(
                 }
             }
             OutlineCircle(Icons.Rounded.Shuffle, "Zufällig abspielen", onShuffle)
+            onAddToPlaylist?.let { OutlineCircle(Icons.AutoMirrored.Rounded.PlaylistAdd, "Zur Playlist hinzufügen", it) }
+            onEdit?.let { OutlineCircle(Icons.Rounded.Edit, "Playlist bearbeiten", it) }
             if (starred != null) {
                 OutlineCircle(
                     if (starred) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
@@ -173,6 +179,7 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
                         onShuffle = { player.play(album.song, shuffle = true) },
                         onSubtitleClick = album.artistId?.let { artistId -> { nav.openArtist(artistId) } },
                         starred = starred,
+                        onAddToPlaylist = { addToPlaylist(album.song, album.name, album.artist.orEmpty(), album.coverArt) },
                         onToggleStar = {
                             val target = !starred
                             starred = target
@@ -199,7 +206,7 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
 @Composable
 fun PlaylistScreen(app: NaviApp, id: String, nav: NavController) {
     val player = LocalPlayer.current
-    val loader = rememberLoad("playlist:$id") { app.client.playlist(id) }
+    val loader = rememberLoad("playlist:$id:${PlaylistBus.version}") { app.client.playlist(id) }
     when (val s = loader.state) {
         is Load.Ok -> {
             val pl = s.value
@@ -217,6 +224,7 @@ fun PlaylistScreen(app: NaviApp, id: String, nav: NavController) {
                         onBack = { nav.popBackStack() },
                         onPlay = { player.play(pl.entry) },
                         onShuffle = { player.play(pl.entry, shuffle = true) },
+                        onEdit = { nav.editPlaylist(pl.id) },
                     )
                 }
                 item { Spacer(Modifier.height(8.dp)) }

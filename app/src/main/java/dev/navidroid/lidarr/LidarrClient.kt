@@ -251,7 +251,8 @@ class LidarrClient(http: OkHttpClient, private val store: LidarrStore) {
      * ohne weitere überwachte Alben an.
      */
     /** Gibt die Lidarr-ID des Albums zurück (nötig für den YouTube-Import). */
-    suspend fun requestAlbum(album: LidarrAlbum): Int {
+    suspend fun requestAlbum(album: LidarrAlbum, search: Boolean = true): Int {
+        if (album.inLibrary && !search) return album.id
         if (album.inLibrary) {
             send("PUT", "api/v1/album/monitor", body = buildJsonObject {
                 put("albumIds", buildJsonArray { add(JsonPrimitive(album.id)) })
@@ -283,7 +284,7 @@ class LidarrClient(http: OkHttpClient, private val store: LidarrStore) {
             album.raw.forEach { (k, v) -> put(k, v) }
             put("artist", artist)
             put("monitored", true)
-            putJsonObject("addOptions") { put("searchForNewAlbum", true) }
+            putJsonObject("addOptions") { put("searchForNewAlbum", search) }
         }
         val created = send("POST", "api/v1/album", body = body) as? JsonObject
         return created?.int("id") ?: throw LidarrException("Lidarr hat keine Album-ID zurückgegeben")

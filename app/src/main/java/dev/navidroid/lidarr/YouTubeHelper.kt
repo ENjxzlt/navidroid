@@ -24,8 +24,14 @@ class HelperException(message: String) : IOException(message)
 
 data class HelperConfig(val url: String, val token: String, val videos: Boolean)
 
+enum class RequestSource { Ask, Lidarr, YouTube }
+
 class HelperStore(context: Context) {
     private val prefs = context.getSharedPreferences("youtube_helper", Context.MODE_PRIVATE)
+
+    var requestSource: RequestSource
+        get() = runCatching { RequestSource.valueOf(prefs.getString("source", null) ?: "Ask") }.getOrDefault(RequestSource.Ask)
+        set(value) = prefs.edit().putString("source", value.name).apply()
 
     @Volatile
     var config: HelperConfig? = load()
@@ -37,7 +43,8 @@ class HelperStore(context: Context) {
     }
 
     fun clear() {
-        prefs.edit().clear().apply()
+        val source = prefs.getString("source", null)
+        prefs.edit().clear().putString("source", source).apply()
         config = null
     }
 
@@ -52,7 +59,22 @@ class HelperStore(context: Context) {
 data class HelperHealth(val version: String = "", val ytDlp: String = "", val lidarr: String? = null, val lidarrError: String? = null)
 
 @Serializable
+data class SearchHit(
+    val url: String,
+    val kind: String = "playlist",
+    val title: String = "",
+    val uploader: String? = null,
+    val count: Int = 0,
+    val durationSec: Int = 0,
+    val thumbnail: String? = null,
+    val matched: Int = 0,
+    val total: Int = 0,
+    val extra: Int = 0,
+)
+
+@Serializable
 data class PlaylistInfo(
+    val kind: String = "playlist",
     val title: String = "",
     val uploader: String? = null,
     val count: Int = 0,
@@ -116,6 +138,12 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     private val videoCache = HashMap<String, String?>()
 
     val configured: Boolean get() = store.config != null
+
+    var requestSource: RequestSource
+        get() = store.requestSource
+        set(value) {
+            store.requestSource = value
+        }
     val videosEnabled: Boolean get() = store.config?.videos == true
 
     private fun config() = store.config ?: throw HelperException("YouTube-Helfer ist nicht eingerichtet")
@@ -187,6 +215,14 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
             })
         }
         return decode(send(config(), "POST", "api/jobs", body.toString()))
+    }
+
+    suspend fun search(query: String, albumId: Int?): List<SearchHit> {
+        val body = buildJsonObject {
+            put("query", query)
+            if (albumId != null) put("albumId", albumId)
+        }
+        return decode(send(config(), "POST", "api/search", body.toString()))
     }
 
     suspend fun jobs(): List<HelperJob> = decode(send(config(), "GET", "api/jobs"))

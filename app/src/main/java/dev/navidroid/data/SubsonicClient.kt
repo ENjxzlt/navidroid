@@ -108,6 +108,30 @@ class SubsonicClient(
             "songCount" to "50",
         ).searchResult3 ?: SearchResult()
 
+    /** Neue Playlist; mit [playlistId] werden stattdessen deren Titel komplett ersetzt (Reihenfolge!). */
+    suspend fun createPlaylist(name: String?, songIds: List<String>, playlistId: String? = null): Playlist? {
+        val params = buildList<Pair<String, String?>> {
+            add("name" to name)
+            add("playlistId" to playlistId)
+            songIds.forEach { add("songId" to it) }
+        }
+        return call("createPlaylist", *params.toTypedArray()).playlist
+    }
+
+    suspend fun updatePlaylist(id: String, name: String? = null, add: List<String> = emptyList(), removeIndexes: List<Int> = emptyList()) {
+        val params = buildList<Pair<String, String?>> {
+            add("playlistId" to id)
+            add("name" to name)
+            add.forEach { add("songIdToAdd" to it) }
+            removeIndexes.forEach { add("songIndexToRemove" to it.toString()) }
+        }
+        call("updatePlaylist", *params.toTypedArray())
+    }
+
+    suspend fun deletePlaylist(id: String) {
+        call("deletePlaylist", "id" to id)
+    }
+
     suspend fun randomSongs(size: Int = 50): List<Song> =
         call("getRandomSongs", "size" to "$size").randomSongs?.song.orEmpty()
 
