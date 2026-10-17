@@ -80,7 +80,7 @@ fun mixColor(hue: Float, lightness: Float = 0.26f): Color = Color(ColorUtils.HSL
 @Composable
 fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit) {
     var filter by rememberSaveable { mutableStateOf(HomeFilter.All) }
-    val data = rememberLoad("home:${PlaylistBus.version}") {
+    val data = rememberLoad("home:${PlaylistBus.version}:${LibraryBus.version}") {
         coroutineScope {
             val recent = async { app.client.albumList("recent", 12, 0) }
             val newest = async { app.client.albumList("newest", 12, 0) }

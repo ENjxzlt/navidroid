@@ -63,6 +63,7 @@ data class HelperHealth(
     val lidarrError: String? = null,
     val ai: Boolean = false,
     val manual: Boolean = false,
+    val library: Boolean = false,
 )
 
 @Serializable
@@ -168,6 +169,41 @@ data class AiDaylist(
 )
 
 @Serializable
+data class AlbumFilesInfo(val tracks: Int = 0, val bytes: Long = 0, val matched: Int = 0)
+
+@Serializable
+data class LibraryEditResult(val changed: Int = 0, val errors: List<String> = emptyList())
+
+@Serializable
+data class LibraryDeleteResult(val id: String = "", val tracks: Int = 0, val bytes: Long = 0, val lidarr: Boolean = false)
+
+@Serializable
+data class TrashEntry(
+    val id: String,
+    val artist: String = "",
+    val album: String = "",
+    val deletedAt: Double = 0.0,
+    val bytes: Long = 0,
+    val tracks: Int = 0,
+    val daysLeft: Int = 0,
+)
+
+@Serializable
+data class UploadResult(val status: String = "", val bytes: Long = 0)
+
+/** Bezug auf ein Album im Musikordner: Künstler, Name und die Titel aus Navidrome (für die Zuordnung). */
+data class AlbumRef(val artist: String, val album: String, val songs: List<dev.navidroid.data.Song>)
+
+/** Neue Werte; null = unverändert. Titeländerungen beziehen sich auf den Index in [AlbumRef.songs]. */
+data class AlbumChanges(
+    val album: String? = null,
+    val albumArtist: String? = null,
+    val year: Int? = null,
+    val genre: String? = null,
+    val tracks: List<Triple<Int, String?, Int?>> = emptyList(),
+)
+
+@Serializable
 data class ManualTrackPreview(
     val videoId: String,
     val index: Int = 0,
@@ -210,6 +246,9 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
 
     // Claude braucht für eine Playlist gern eine Minute oder mehr.
     private val slowHttp = http.newBuilder().readTimeout(300, TimeUnit.SECONDS).build()
+    // Große Dateien über langsame Verbindungen
+    private val uploadHttp = http.newBuilder().writeTimeout(10, TimeUnit.MINUTES).readTimeout(5, TimeUnit.MINUTES).build()
+
     // coerceInputValues: null in Feldern mit Standardwert (z. B. Länge) nicht als Fehler behandeln
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; coerceInputValues = true }
     private val videoCache = HashMap<String, String?>()
@@ -235,6 +274,7 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
         body: String? = null,
         query: Map<String, String> = emptyMap(),
         client: OkHttpClient = http,
+        raw: okhttp3.RequestBody? = null,
     ): String =
         withContext(Dispatchers.IO) {
             val base = cfg.url.toHttpUrlOrNull() ?: throw HelperException("Ungültige Helfer-URL")
@@ -247,7 +287,7 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
             val request = Request.Builder()
                 .url(url)
                 .header("X-Helper-Token", cfg.token)
-                .method(method, body?.toRequestBody("application/json".toMediaType()))
+                .method(method, raw ?: body?.toRequestBody("application/json".toMediaType()))
                 .build()
             try {
                 client.newCall(request).execute().use { resp ->
@@ -427,6 +467,81 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
             put("count", count)
         }
         return decode(send(config(), "POST", "api/ai/daylist", body.toString(), client = slowHttp))
+    }
+
+    // ---- Bibliothek bearbeiten ----
+
+    private fun refJson(ref: AlbumRef) = buildJsonObject {
+        put("artist", ref.artist)
+        put("album", ref.album)
+        put("songs", buildJsonArray {
+            ref.songs.forEach { s ->
+                add(buildJsonObject {
+                    put("title", s.title)
+                    put("track", s.track ?: 0)
+                    put("disc", s.discNumber ?: 1)
+                })
+            }
+        })
+    }
+
+    suspend fun albumFiles(ref: AlbumRef): AlbumFilesInfo =
+        decode(send(config(), "POST", "api/library/album/files", refJson(ref).toString()))
+
+    suspend fun editAlbum(ref: AlbumRef, c: AlbumChanges): LibraryEditResult {
+        val body = buildJsonObject {
+            put("ref", refJson(ref))
+            c.album?.let { put("album", it) }
+            c.albumArtist?.let { put("albumArtist", it) }
+            c.year?.let { put("year", it) }
+            c.genre?.let { put("genre", it) }
+            put("tracks", buildJsonArray {
+                c.tracks.forEach { (i, title, number) ->
+                    add(buildJsonObject {
+                        put("index", i)
+                        title?.let { put("title", it) }
+                        number?.let { put("track", it) }
+                    })
+                }
+            })
+        }
+        return decode(send(config(), "POST", "api/library/album/edit", body.toString(), client = slowHttp))
+    }
+
+    suspend fun setAlbumCover(artist: String, album: String, image: ByteArray, mime: String) {
+        send(
+            config(), "POST", "api/library/album/cover",
+            query = mapOf("artist" to artist, "album" to album),
+            client = slowHttp,
+            raw = image.toRequestBody(mime.toMediaType()),
+        )
+    }
+
+    suspend fun deleteAlbum(ref: AlbumRef, unmonitor: Boolean): LibraryDeleteResult {
+        val body = buildJsonObject {
+            put("ref", refJson(ref))
+            put("unmonitor", unmonitor)
+        }
+        return decode(send(config(), "POST", "api/library/album/delete", body.toString(), client = slowHttp))
+    }
+
+    suspend fun trash(): List<TrashEntry> = decode(send(config(), "GET", "api/library/trash"))
+
+    suspend fun restoreTrash(id: String) {
+        send(config(), "POST", "api/library/trash/$id/restore", "{}", client = slowHttp)
+    }
+
+    /** Lädt eine Datei hoch; [body] meldet den Fortschritt selbst. */
+    suspend fun upload(query: Map<String, String>, body: okhttp3.RequestBody): UploadResult =
+        decode(send(config(), "POST", "api/library/upload", query = query, client = uploadHttp, raw = body))
+
+    suspend fun uploadCover(artist: String, album: String, year: Int?, image: ByteArray, mime: String) {
+        send(
+            config(), "POST", "api/library/upload/cover",
+            query = buildMap { put("artist", artist); put("album", album); year?.let { put("year", "$it") } },
+            client = slowHttp,
+            raw = image.toRequestBody(mime.toMediaType()),
+        )
     }
 
     suspend fun retryJob(id: String): HelperJob = decode(send(config(), "POST", "api/jobs/$id/retry", "{}"))

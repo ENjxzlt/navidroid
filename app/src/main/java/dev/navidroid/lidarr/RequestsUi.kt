@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentPaste
@@ -350,12 +351,14 @@ class RequestsVm(private val lidarr: LidarrClient, private val helper: HelperCli
 }
 
 @Composable
-fun RequestsTab(app: NaviApp) {
+fun RequestsTab(app: NaviApp, onUpload: () -> Unit = {}) {
     var configured by remember { mutableStateOf(app.lidarrStore.config != null) }
     var showSettings by remember { mutableStateOf(false) }
 
     if (!configured) {
-        ScreenTitle("Anfragen")
+        ScreenTitle("Anfragen") {
+            if (app.helper.configured) RoundIconButton(Icons.Rounded.Upload, "Eigene Dateien hochladen", onUpload)
+        }
         Column(
             Modifier.fillMaxSize().padding(32.dp),
             verticalArrangement = Arrangement.Center,
@@ -374,7 +377,7 @@ fun RequestsTab(app: NaviApp) {
             Button(onClick = { showSettings = true }) { Text("Lidarr verbinden") }
         }
     } else {
-        RequestsContent(app, onOpenSettings = { showSettings = true })
+        RequestsContent(app, onOpenSettings = { showSettings = true }, onUpload = onUpload)
     }
 
     if (showSettings) {
@@ -387,7 +390,7 @@ fun RequestsTab(app: NaviApp) {
 }
 
 @Composable
-private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
+private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit, onUpload: () -> Unit) {
     val vm: RequestsVm = viewModel { RequestsVm(app.lidarr, app.helper) }
     val helperReady = app.helper.configured
     val context = LocalContext.current
@@ -415,6 +418,8 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
 
     Column(Modifier.fillMaxSize()) {
         ScreenTitle("Anfragen") {
+            if (helperReady) RoundIconButton(Icons.Rounded.Upload, "Eigene Dateien hochladen", onUpload)
+            Spacer(Modifier.size(8.dp))
             RoundIconButton(Icons.Rounded.Tune, "Lidarr-Einstellungen", onOpenSettings)
         }
         SegmentedControl(

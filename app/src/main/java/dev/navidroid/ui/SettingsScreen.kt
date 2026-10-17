@@ -135,6 +135,13 @@ fun SettingsScreen(app: NaviApp, nav: NavController, onCheckUpdates: () -> Unit,
                 ToggleRow("Playlists & Mixe aktuell halten", "Neue Titel automatisch nachladen", app.offline.autoSync) { app.offline.autoSync = it }
             }
 
+            if (app.helper.configured) {
+                Section("Bibliothek") {
+                    ValueRow("Eigene Dateien hochladen", "MP3, FLAC, M4A … in deinen Musikordner", null) { nav.navigate(Routes.UPLOAD) }
+                    ValueRow("Papierkorb", "Gelöschte Alben 30 Tage lang wiederherstellen", null) { nav.navigate(Routes.TRASH) }
+                }
+            }
+
             Section("Songtexte & Anzeige") {
                 ToggleRow("Online-Songtexte (LRCLIB)", "Wenn Navidrome keinen Text hat", onlineLyrics) {
                     onlineLyrics = it

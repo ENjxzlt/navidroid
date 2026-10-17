@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX, ID3NoHeaderError
 from pydantic import BaseModel
@@ -35,10 +35,11 @@ from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
 import ai
+import library
 import ma
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -649,7 +650,7 @@ def health() -> dict:
     except HTTPException as e:
         lidarr_version, lidarr_error = None, e.detail
     return {"version": VERSION, "ytDlp": YTDLP_VERSION, "lidarr": lidarr_version, "lidarrError": lidarr_error,
-            "ai": ai.configured(), "manual": MUSIC_DIR is not None}
+            "ai": ai.configured(), "manual": MUSIC_DIR is not None, "library": MUSIC_DIR is not None}
 
 
 @app.post("/api/preview", dependencies=[Depends(require_token)])
@@ -1013,6 +1014,238 @@ def ma_command(req: MaCommandRequest) -> dict:
 @app.post("/api/ma/state", dependencies=[Depends(require_token)])
 def ma_state(req: MaStateRequest) -> dict:
     return _ma(ma.state, req.ma.url, req.ma.token, req.playerId)
+
+
+# ---- Bibliothek bearbeiten (braucht MUSIC_DIR) ----
+
+_index = library.Index(MUSIC_DIR) if MUSIC_DIR else None
+_trash = library.Trash(MUSIC_DIR, DATA_DIR, _index) if MUSIC_DIR else None
+_library_lock = threading.Lock()
+
+
+def _need_library() -> library.Index:
+    if _index is None:
+        raise HTTPException(400, "Der Helfer hat keinen Zugriff auf den Musikordner (MUSIC_DIR)")
+    return _index
+
+
+def _purge_trash_daily() -> None:
+    while True:
+        try:
+            if _trash:
+                n = _trash.purge()
+                if n:
+                    log.info("Papierkorb: %d alte Einträge endgültig gelöscht", n)
+        except Exception:
+            log.exception("Papierkorb aufräumen fehlgeschlagen")
+        time.sleep(6 * 3600)
+
+
+if _trash:
+    threading.Thread(target=_purge_trash_daily, daemon=True).start()
+
+
+class LibSong(BaseModel):
+    title: str = ""
+    track: int = 0
+    disc: int = 1
+
+
+class AlbumRef(BaseModel):
+    artist: str
+    album: str
+    songs: list[LibSong] = []
+
+
+class TrackEdit(BaseModel):
+    index: int
+    title: str | None = None
+    track: int | None = None
+
+
+class AlbumEdit(BaseModel):
+    ref: AlbumRef
+    album: str | None = None
+    albumArtist: str | None = None
+    year: int | None = None
+    genre: str | None = None
+    tracks: list[TrackEdit] = []
+
+
+class AlbumDelete(BaseModel):
+    ref: AlbumRef
+    unmonitor: bool = True
+
+
+def _album_files(ref: AlbumRef) -> list[dict]:
+    files = library.album_files(_need_library(), ref.artist, ref.album)
+    if not files:
+        raise HTTPException(404, f"Keine Dateien zu „{ref.album}“ im Musikordner gefunden")
+    return files
+
+
+@app.post("/api/library/album/files", dependencies=[Depends(require_token)])
+def library_album_files(ref: AlbumRef) -> dict:
+    files = _album_files(ref)
+    size = sum(Path(f["path"]).stat().st_size for f in files if Path(f["path"]).exists())
+    return {"tracks": len(files), "bytes": size, "matched": len(library.assign(files, [s.model_dump() for s in ref.songs]))}
+
+
+@app.post("/api/library/album/edit", dependencies=[Depends(require_token)])
+def library_album_edit(req: AlbumEdit) -> dict:
+    with _library_lock:
+        files = _album_files(req.ref)
+        mapping = library.assign(files, [s.model_dump() for s in req.ref.songs])
+        per_file: dict[str, dict] = {f["path"]: {} for f in files}
+        for f in files:
+            v = per_file[f["path"]]
+            if req.album is not None and req.album.strip():
+                v["album"] = req.album.strip()
+            if req.albumArtist is not None and req.albumArtist.strip():
+                v["albumartist"] = req.albumArtist.strip()
+                # Tippfehler im Künstlernamen stehen meist auch im Titel-Künstler
+                if library.norm(f["artist"]) == library.norm(req.ref.artist):
+                    v["artist"] = req.albumArtist.strip()
+            if req.year is not None:
+                v["date"] = str(req.year) if req.year > 0 else ""
+            if req.genre is not None:
+                v["genre"] = req.genre.strip()
+        for t in req.tracks:
+            f = mapping.get(t.index)
+            if f is None:
+                continue
+            if t.title is not None and t.title.strip():
+                per_file[f["path"]]["title"] = t.title.strip()
+            if t.track is not None and t.track > 0:
+                per_file[f["path"]]["tracknumber"] = str(t.track)
+        changed = 0
+        errors = []
+        for path, values in per_file.items():
+            if not values:
+                continue
+            try:
+                library.write_tags(path, values)
+                changed += 1
+            except library.LibraryError as e:
+                errors.append(str(e))
+        _index.forget(list(per_file))
+    if errors and not changed:
+        raise HTTPException(500, errors[0])
+    return {"changed": changed, "errors": errors}
+
+
+@app.post("/api/library/album/cover", dependencies=[Depends(require_token)])
+async def library_album_cover(request: Request, artist: str = Query(...), album: str = Query(...)) -> dict:
+    image = await request.body()
+    if not image or len(image) > 15 * 1024 * 1024:
+        raise HTTPException(400, "Kein oder zu großes Bild")
+    mime = "image/png" if image[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
+    files = _album_files(AlbumRef(artist=artist, album=album))
+    with _library_lock:
+        library.set_cover(_index, files, image, mime)
+    return {"tracks": len(files)}
+
+
+def _unmonitor_in_lidarr(artist: str, album: str) -> bool:
+    try:
+        artists = lidarr("GET", "artist") or []
+        a = next((x for x in artists if library.norm(x.get("artistName")) == library.norm(artist)), None)
+        if not a:
+            return False
+        albums = lidarr("GET", "album", params={"artistId": a["id"]}) or []
+        hit = next((x for x in albums if library.norm(x.get("title")) == library.norm(album)), None)
+        if not hit:
+            return False
+        lidarr("PUT", "album/monitor", json={"albumIds": [hit["id"]], "monitored": False})
+        return True
+    except HTTPException:
+        return False
+
+
+@app.post("/api/library/album/delete", dependencies=[Depends(require_token)])
+def library_album_delete(req: AlbumDelete) -> dict:
+    with _library_lock:
+        files = _album_files(req.ref)
+        result = _trash.delete(req.ref.artist, req.ref.album, files)
+    result["lidarr"] = _unmonitor_in_lidarr(req.ref.artist, req.ref.album) if req.unmonitor else False
+    return result
+
+
+@app.get("/api/library/trash", dependencies=[Depends(require_token)])
+def library_trash() -> list[dict]:
+    _need_library()
+    return _trash.list()
+
+
+@app.post("/api/library/trash/{entry_id}/restore", dependencies=[Depends(require_token)])
+def library_trash_restore(entry_id: str) -> dict:
+    _need_library()
+    try:
+        return _trash.restore(entry_id)
+    except library.LibraryError as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@app.post("/api/library/upload", dependencies=[Depends(require_token)])
+async def library_upload(
+    request: Request,
+    filename: str = Query(...),
+    artist: str = Query(...),
+    album: str = Query(...),
+    title: str = Query(...),
+    track: int = Query(0),
+    disc: int = Query(1),
+    discs: int = Query(1),
+    year: int | None = Query(None),
+    genre: str | None = Query(None),
+    trackArtist: str | None = Query(None),
+) -> dict:
+    index = _need_library()
+    ext = Path(filename).suffix.lower()
+    if ext not in library.AUDIO:
+        raise HTTPException(400, f"Dateityp {ext or '?'} wird nicht unterstützt")
+    target = library.upload_target(MUSIC_DIR, artist, album, year, track, disc, title, ext, discs)
+    if library.already_there(index, target, artist, album, title):
+        return {"status": "exists"}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    part = target.with_name("." + target.name + ".part")
+    size = 0
+    try:
+        with open(part, "wb") as out:
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > 2 * 1024 * 1024 * 1024:
+                    raise HTTPException(413, "Datei zu groß")
+                out.write(chunk)
+        if size == 0:
+            raise HTTPException(400, "Leere Datei")
+        part.replace(target)
+    finally:
+        part.unlink(missing_ok=True)
+    try:
+        library.write_tags(str(target), {
+            "album": album, "albumartist": artist, "artist": trackArtist or artist, "title": title,
+            "tracknumber": str(track) if track else None, "discnumber": str(disc) if discs > 1 else None,
+            "date": str(year) if year else None, "genre": genre or None,
+        })
+    except library.LibraryError as e:
+        log.warning("Tags für %s nicht geschrieben: %s", target, e)
+    return {"status": "ok", "bytes": size}
+
+
+@app.post("/api/library/upload/cover", dependencies=[Depends(require_token)])
+async def library_upload_cover(request: Request, artist: str = Query(...), album: str = Query(...), year: int | None = Query(None)) -> dict:
+    image = await request.body()
+    if not image or len(image) > 15 * 1024 * 1024:
+        raise HTTPException(400, "Kein oder zu großes Bild")
+    mime = "image/png" if image[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
+    folder = library.upload_target(MUSIC_DIR, artist, album, year, 1, 1, "x", ".mp3").parent if MUSIC_DIR else None
+    if folder is None or not folder.exists():
+        raise HTTPException(404, "Album-Ordner noch nicht vorhanden – zuerst die Titel hochladen")
+    files = [{"path": str(p)} for p in folder.iterdir() if p.suffix.lower() in library.AUDIO and not p.name.startswith(".")]
+    with _library_lock:
+        library.set_cover(_need_library(), files, image, mime)
+    return {"tracks": len(files)}
 
 
 @app.get("/api/artist-genres", dependencies=[Depends(require_token)])

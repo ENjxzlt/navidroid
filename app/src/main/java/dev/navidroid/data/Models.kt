@@ -19,7 +19,11 @@ data class SubsonicResponse(
     val searchResult3: SearchResult? = null,
     val randomSongs: SongList? = null,
     val lyricsList: LyricsList? = null,
+    val scanStatus: ScanStatus? = null,
 )
+
+@Serializable
+data class ScanStatus(val scanning: Boolean = false, val count: Long = 0)
 
 @Serializable
 data class ApiError(val code: Int = 0, val message: String? = null)

@@ -153,6 +153,13 @@ class SubsonicClient(
         call("scrobble", "id" to id, "submission" to "$submission", "time" to timeMs?.toString())
     }
 
+    /** Navidrome neu einlesen lassen (nach Änderungen im Musikordner); braucht Admin-Rechte. */
+    suspend fun startScan() {
+        call("startScan")
+    }
+
+    suspend fun scanning(): Boolean = call("getScanStatus").scanStatus?.scanning == true
+
     suspend fun setStarred(id: String, starred: Boolean, isAlbum: Boolean = false) {
         call(if (starred) "star" else "unstar", (if (isAlbum) "albumId" else "id") to id)
     }

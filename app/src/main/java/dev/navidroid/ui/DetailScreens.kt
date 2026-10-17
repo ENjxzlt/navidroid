@@ -75,6 +75,7 @@ private fun TintedHeader(
     onEdit: (() -> Unit)? = null,
     downloadStatus: String? = null,
     download: (@Composable () -> Unit)? = null,
+    menu: (@Composable () -> Unit)? = null,
 ) {
     val tint = rememberCoverTint(coverUrl, alternative = alternative)
     val soft = mutedOn(tint)
@@ -82,7 +83,11 @@ private fun TintedHeader(
         Modifier.fillMaxWidth().background(tint).statusBarsPadding().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        RoundIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück", onBack, container = Color.Black.copy(alpha = 0.3f))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RoundIconButton(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück", onBack, container = Color.Black.copy(alpha = 0.3f))
+            Spacer(Modifier.weight(1f))
+            menu?.invoke()
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.Bottom) {
             CoverImage(
                 coverUrl,
@@ -160,7 +165,7 @@ private fun PlainBack(onBack: () -> Unit) {
 fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
     val player = LocalPlayer.current
     val scope = rememberCoroutineScope()
-    val loader = rememberLoad("album:$id") {
+    val loader = rememberLoad("album:$id:${LibraryBus.version}") {
         try {
             app.client.album(id)
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -194,9 +199,9 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
                         onShuffle = { player.play(album.song.playableNow(app), shuffle = true) },
                         onSubtitleClick = album.artistId?.let { artistId -> { nav.openArtist(artistId) } },
                         starred = starred,
-                        onAddToPlaylist = { addToPlaylist(album.song, album.name, album.artist.orEmpty(), album.coverArt) },
                         downloadStatus = downloadLine(dl),
                         download = { DownloadToggle(dl, { app.offline.downloadAlbum(album) }, { app.offline.remove("album:${album.id}") }) },
+                        menu = { AlbumMenuButton(app, album, nav) { addToPlaylist(album.song, album.name, album.artist.orEmpty(), album.coverArt) } },
                         onToggleStar = {
                             val target = !starred
                             starred = target

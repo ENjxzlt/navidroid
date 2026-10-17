@@ -119,7 +119,7 @@ fun HomeScreen(
                 HomeTab.Start -> if (offline) DownloadsContent(app, nav, onBack = null) else HomeStartTab(app, nav, onOpenSettings = { nav.navigate(Routes.SETTINGS) })
                 HomeTab.Library -> LibraryTab(app, nav)
                 HomeTab.Search -> SearchTab(app, nav)
-                HomeTab.Requests -> Column(Modifier.fillMaxSize()) { RequestsTab(app) }
+                HomeTab.Requests -> Column(Modifier.fillMaxSize()) { RequestsTab(app, onUpload = { nav.navigate(Routes.UPLOAD) }) }
             }
         }
     }
@@ -257,7 +257,9 @@ private enum class LibrarySection(val label: String) { Playlists("Playlists"), A
 private fun LibraryTab(app: NaviApp, nav: NavController) {
     var section by rememberSaveable { mutableStateOf(LibrarySection.Playlists) }
     Column(Modifier.fillMaxSize()) {
-        ScreenTitle("Bibliothek")
+        ScreenTitle("Bibliothek") {
+            if (app.helper.configured) RoundIconButton(Icons.Rounded.Add, "Eigene Dateien hochladen", { nav.navigate(Routes.UPLOAD) })
+        }
         DownloadsEntry(app) { nav.navigate(Routes.DOWNLOADS) }
         SegmentedControl(
             options = LibrarySection.entries.map { it to it.label },

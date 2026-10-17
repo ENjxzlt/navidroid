@@ -42,6 +42,8 @@ class NaviApp : Application(), ImageLoaderFactory {
         private set
     lateinit var daylist: dev.navidroid.data.DaylistRepository
         private set
+    lateinit var uploads: dev.navidroid.upload.UploadManager
+        private set
 
     val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -64,6 +66,7 @@ class NaviApp : Application(), ImageLoaderFactory {
         helper = HelperClient(http, helperStore)
         offline = OfflineManager(this).also { it.start() }
         daylist = dev.navidroid.data.DaylistRepository(this)
+        uploads = dev.navidroid.upload.UploadManager(this)
     }
 
     override fun newImageLoader(): ImageLoader =

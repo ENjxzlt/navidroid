@@ -56,13 +56,14 @@ fun NaviRoot(app: NaviApp) {
     PlaylistBus.addRequest?.let { AddToPlaylistSheet(app, it) }
     if (DeviceBus.open) DevicesSheet(app)
 
-    val fullScreen = route == Routes.PLAYER || route == Routes.LYRICS || route == Routes.LOGIN || route == Routes.PLAYLIST_EDIT || route == Routes.AI_PLAYLIST
+    val fullScreen = route == Routes.PLAYER || route == Routes.LYRICS || route == Routes.LOGIN || route == Routes.PLAYLIST_EDIT || route == Routes.AI_PLAYLIST || route == Routes.ALBUM_EDIT
     val showMini = playerState.hasItem && route != null && !fullScreen
 
     // Die Akzentfarbe der ganzen App folgt dem Cover des laufenden Titels.
     CoverAccentTheme(playerState.artworkUri, albumCoverAlternative(playerState.albumId)) {
     Scaffold(
         containerColor = Navi.Bg,
+        snackbarHost = { androidx.compose.material3.SnackbarHost(Snack.host) },
         bottomBar = {
             Column {
                 if (showMini) {
@@ -170,6 +171,9 @@ fun NaviRoot(app: NaviApp) {
             }
             composable(Routes.DOWNLOADS) { DownloadsScreen(app, nav) }
             composable(Routes.DAYLIST) { DaylistScreen(app, nav) }
+            composable(Routes.ALBUM_EDIT) { e -> AlbumEditScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
+            composable(Routes.TRASH) { TrashScreen(app, nav) }
+            composable(Routes.UPLOAD) { UploadScreen(app, nav) }
             composable(Routes.OFFLINE_COLLECTION) { e -> OfflineCollectionScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.LYRICS) { LyricsScreen(app, onClose = { nav.popBackStack() }) }
         }
