@@ -310,7 +310,7 @@ class LidarrClient(http: OkHttpClient, private val store: LidarrStore) {
                 artist = (r["artist"] as? JsonObject)?.str("artistName"),
                 status = statusLabel(r.str("trackedDownloadState") ?: r.str("status")),
                 progress = if (size > 0) ((size - left) / size).toFloat().coerceIn(0f, 1f) else null,
-                timeLeft = r.str("timeleft")?.substringBefore('.'),
+                timeLeft = r.str("timeleft")?.substringBefore('.')?.takeIf { it.any { c -> c in '1'..'9' } },
                 error = r.str("errorMessage") ?: messages.firstOrNull(),
             )
         }

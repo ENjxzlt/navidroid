@@ -332,6 +332,9 @@ fun <T> SegmentedControl(
                         label,
                         style = MaterialTheme.typography.labelLarge.copy(fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold),
                         color = if (active) Navi.Text else Navi.Muted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     val count = badge(key)
                     if (count > 0) {
@@ -339,7 +342,13 @@ fun <T> SegmentedControl(
                         Box(
                             Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).padding(horizontal = 6.dp, vertical = 1.dp),
                         ) {
-                            Text("$count", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = MaterialTheme.typography.labelMedium.letterSpacing), color = MaterialTheme.colorScheme.onPrimary)
+                            Text(
+                                if (count > 99) "99+" else "$count",
+                                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = MaterialTheme.typography.labelMedium.letterSpacing),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                maxLines = 1,
+                                softWrap = false,
+                            )
                         }
                     }
                 }
