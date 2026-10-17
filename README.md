@@ -18,6 +18,8 @@ Android-Client für [Navidrome](https://www.navidrome.org/) (Subsonic-API), gesc
 - Scrobbling an Navidrome („Spielt gerade“ + nach halber Laufzeit)
 - Musik anfordern über [Lidarr](https://lidarr.audio/): Alben oder ganze Künstler suchen und hinzufügen,
   Downloads verfolgen (Tab „Anfragen“; benötigt Lidarr-URL und API-Key)
+- KI-Playlists: Wunsch in eigenen Worten, Claude stellt die Playlist aus deiner Bibliothek zusammen
+  (über einen bestehenden Claude-Code-Worker per SSH, siehe unten)
 - Playlists anlegen, umbenennen, sortieren (Ziehen), Titel hinzufügen/entfernen, löschen – gespeichert in Navidrome
 - Beim Anfordern Quelle wählen: Lidarr oder direkt YouTube; YouTube-Suche mit Abgleich der Album-Titel
 - Fehlende Alben aus YouTube-Playlists oder „Full Album“-Videos mit Kapiteln holen (optionaler YouTube-Helfer, siehe unten)
@@ -46,6 +48,11 @@ Einrichtung:
    unter einem anderen Pfad, diesen als `LIDARR_STAGING_DIR` setzen.
 3. Helfer und Lidarr mit derselben UID/GID laufen lassen, damit Lidarr die Dateien verschieben darf.
 4. In der App: Anfragen → Einstellungen → „YouTube-Helfer“ mit URL (Port 8787) und `HELPER_TOKEN`.
+
+**KI-Playlists (optional):** Der Helfer ruft auf einem Claude-Code-Worker per SSH `claude -p` auf – ohne Werkzeuge,
+nur mit der Titelliste als Daten. Dafür im Helfer `CLAUDE_WORKER` (z. B. `claude@192.168.178.179`) und
+`CLAUDE_WORKER_PORT` setzen und den öffentlichen Schlüssel aus `/data/claude_worker_ed25519.pub` beim Worker
+eintragen.
 
 **Altersbeschränkte Videos:** Dafür verlangt YouTube eine Anmeldung. Exportiere die Cookies eines
 angemeldeten Browsers im Netscape-Format (z. B. mit der Erweiterung „Get cookies.txt LOCALLY“) und lege sie als
