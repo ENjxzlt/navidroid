@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
@@ -70,6 +71,7 @@ import dev.navidroid.BuildConfig
 import dev.navidroid.NaviApp
 import dev.navidroid.data.Album
 import dev.navidroid.data.SubsonicClient
+import dev.navidroid.lidarr.RequestsTab
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -80,6 +82,7 @@ enum class HomeTab(val label: String, val icon: ImageVector) {
     Artists("Künstler", Icons.Filled.Person),
     Playlists("Playlists", Icons.AutoMirrored.Filled.PlaylistPlay),
     Search("Suche", Icons.Filled.Search),
+    Requests("Anfragen", Icons.Filled.LibraryAdd),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -139,6 +142,7 @@ fun HomeScreen(
                 HomeTab.Artists -> ArtistsTab(app, nav)
                 HomeTab.Playlists -> PlaylistsTab(app, nav)
                 HomeTab.Search -> SearchTab(app, nav)
+                HomeTab.Requests -> RequestsTab(app)
             }
         }
     }
