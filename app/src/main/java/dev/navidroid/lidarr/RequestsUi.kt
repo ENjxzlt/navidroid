@@ -404,7 +404,7 @@ private fun RequestAction(
             modifier = Modifier.height(36.dp),
         ) {
             Box(Modifier.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
-                Text(actionLabel, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold), color = Navi.OnAccent)
+                Text(actionLabel, style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold), color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }

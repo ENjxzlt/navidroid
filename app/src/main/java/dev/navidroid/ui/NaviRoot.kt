@@ -57,6 +57,8 @@ fun NaviRoot(app: NaviApp) {
     val fullScreen = route == Routes.PLAYER || route == Routes.LYRICS || route == Routes.LOGIN
     val showMini = playerState.hasItem && route != null && !fullScreen
 
+    // Die Akzentfarbe der ganzen App folgt dem Cover des laufenden Titels.
+    CoverAccentTheme(playerState.artworkUri) {
     Scaffold(
         containerColor = Navi.Bg,
         bottomBar = {
@@ -135,5 +137,6 @@ fun NaviRoot(app: NaviApp) {
             }
             composable(Routes.LYRICS) { LyricsScreen(app, onClose = { nav.popBackStack() }) }
         }
+    }
     }
 }

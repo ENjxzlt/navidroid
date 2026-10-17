@@ -1,6 +1,7 @@
 package dev.navidroid.ui
 
 import android.graphics.drawable.BitmapDrawable
+import android.util.LruCache
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -174,26 +175,67 @@ fun EmptyHint(text: String) {
     }
 }
 
-// ---- Covertönung ----
+// ---- Farben aus dem Cover ----
+
+/** Aus einem Cover gewonnene Farben: dunkle Hintergrundtönung und ein heller Akzent. */
+data class CoverColors(val tint: Color, val accent: Color?)
+
+private val coverColorCache = LruCache<String, CoverColors>(96)
+
+private fun hslColor(rgb: Int, saturation: (Float) -> Float, lightness: Float): Color {
+    val hsl = FloatArray(3)
+    ColorUtils.colorToHSL(rgb, hsl)
+    hsl[1] = saturation(hsl[1])
+    hsl[2] = lightness
+    return Color(ColorUtils.HSLToColor(hsl))
+}
+
+private fun coverColors(palette: Palette): CoverColors? {
+    val base = palette.vibrantSwatch ?: palette.dominantSwatch ?: palette.mutedSwatch ?: return null
+    val tint = hslColor(base.rgb, { it.coerceAtMost(0.55f) }, 0.13f)
+    // Akzent: kräftigste Farbe des Covers, aufgehellt, damit sie auf Dunkel gut lesbar ist.
+    // Fast graue Cover behalten den Standard-Akzent.
+    val accentSwatch = palette.lightVibrantSwatch ?: palette.vibrantSwatch ?: palette.lightMutedSwatch ?: palette.dominantSwatch
+    val accent = accentSwatch?.let { sw ->
+        val hsl = FloatArray(3).also { ColorUtils.colorToHSL(sw.rgb, it) }
+        if (hsl[1] < 0.12f) null else hslColor(sw.rgb, { it.coerceIn(0.45f, 0.85f) }, 0.72f)
+    }
+    return CoverColors(tint, accent)
+}
+
+/** Lädt das Cover klein und berechnet seine Farben; Ergebnisse werden zwischengespeichert. */
+@Composable
+fun rememberCoverColors(model: Any?): CoverColors? {
+    val context = LocalContext.current
+    val key = model?.toString()
+    var colors by remember(key) { mutableStateOf(key?.let { coverColorCache.get(it) }) }
+    LaunchedEffect(key) {
+        if (key == null || colors != null) return@LaunchedEffect
+        val request = ImageRequest.Builder(context).data(model).size(96).allowHardware(false).build()
+        val bitmap = (context.imageLoader.execute(request).drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
+        val computed = withContext(Dispatchers.Default) { coverColors(Palette.from(bitmap).generate()) } ?: return@LaunchedEffect
+        coverColorCache.put(key, computed)
+        colors = computed
+    }
+    return colors
+}
 
 /** Dunkle, aus dem Cover gewonnene Hintergrundfarbe, auf der weißer Text gut lesbar bleibt. */
 @Composable
-fun rememberCoverTint(model: Any?, fallback: Color = Navi.Surface): Color {
-    val context = LocalContext.current
-    var color by remember(model) { mutableStateOf<Color?>(null) }
-    LaunchedEffect(model) {
-        if (model == null) return@LaunchedEffect
-        val request = ImageRequest.Builder(context).data(model).size(96).allowHardware(false).build()
-        val bitmap = (context.imageLoader.execute(request).drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
-        val palette = withContext(Dispatchers.Default) { Palette.from(bitmap).generate() }
-        val swatch = palette.vibrantSwatch ?: palette.dominantSwatch ?: palette.mutedSwatch ?: return@LaunchedEffect
-        val hsl = FloatArray(3)
-        ColorUtils.colorToHSL(swatch.rgb, hsl)
-        hsl[1] = hsl[1].coerceAtMost(0.55f)
-        hsl[2] = 0.13f
-        color = Color(ColorUtils.HSLToColor(hsl))
-    }
-    return animateColorAsState(color ?: fallback, tween(500), label = "coverTint").value
+fun rememberCoverTint(model: Any?, fallback: Color = Navi.Surface): Color =
+    animateColorAsState(rememberCoverColors(model)?.tint ?: fallback, tween(500), label = "coverTint").value
+
+/** Setzt die Akzentfarbe des Themes auf die Farbe des Covers (mit sanftem Übergang). */
+@Composable
+fun CoverAccentTheme(model: Any?, content: @Composable () -> Unit) {
+    val accent by animateColorAsState(rememberCoverColors(model)?.accent ?: Navi.Accent, tween(600), label = "coverAccent")
+    val scheme = MaterialTheme.colorScheme.copy(
+        primary = accent,
+        secondary = accent,
+        onPrimary = Navi.Bg,
+        onSecondary = Navi.Bg,
+    )
+    MaterialTheme(colorScheme = scheme, typography = MaterialTheme.typography, shapes = MaterialTheme.shapes, content = content)
 }
 
 /** Gedämpfte Textfarbe passend zur Tönung (hell, leicht eingefärbt). */
@@ -239,7 +281,7 @@ fun PillChip(label: String, selected: Boolean, onClick: () -> Unit) {
             Text(
                 label,
                 style = MaterialTheme.typography.labelLarge.copy(fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold),
-                color = if (selected) Navi.OnAccent else Color(0xFFD5D8DE),
+                color = if (selected) MaterialTheme.colorScheme.onPrimary else Color(0xFFD5D8DE),
             )
         }
     }
@@ -288,7 +330,7 @@ fun <T> SegmentedControl(
                         Box(
                             Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).padding(horizontal = 6.dp, vertical = 1.dp),
                         ) {
-                            Text("$count", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = MaterialTheme.typography.labelMedium.letterSpacing), color = Navi.OnAccent)
+                            Text("$count", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = MaterialTheme.typography.labelMedium.letterSpacing), color = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
                 }

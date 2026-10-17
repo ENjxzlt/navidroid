@@ -104,9 +104,9 @@ private fun TintedHeader(
                 modifier = Modifier.weight(1f).height(48.dp),
             ) {
                 Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.PlayArrow, null, tint = Navi.OnAccent)
+                    Icon(Icons.Rounded.PlayArrow, null, tint = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(6.dp))
-                    Text("Abspielen", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold), color = Navi.OnAccent)
+                    Text("Abspielen", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold), color = MaterialTheme.colorScheme.onPrimary)
                 }
             }
             OutlineCircle(Icons.Rounded.Shuffle, "Zufällig abspielen", onShuffle)
@@ -153,6 +153,7 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
             var starred by remember(album.id) { mutableStateOf(album.starred != null) }
             val cover = remember(album.coverArt) { app.client.coverArtUrl(album.coverArt, 600) }
             val multiDisc = album.song.mapNotNull { it.discNumber }.distinct().size > 1
+            CoverAccentTheme(cover) {
             LazyColumn(Modifier.fillMaxSize().background(Navi.Bg), contentPadding = PaddingValues(bottom = 16.dp)) {
                 item {
                     TintedHeader(
@@ -182,6 +183,7 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
                     SongRow(song, onClick = { player.play(album.song, i) }, number = number)
                 }
             }
+            }
         }
         Load.Loading -> Column(Modifier.fillMaxSize()) { PlainBack { nav.popBackStack() }; CenteredProgress() }
         is Load.Err -> Column(Modifier.fillMaxSize()) { PlainBack { nav.popBackStack() }; ErrorView(s.message, loader.reload) }
@@ -196,6 +198,7 @@ fun PlaylistScreen(app: NaviApp, id: String, nav: NavController) {
         is Load.Ok -> {
             val pl = s.value
             val cover = remember(pl.coverArt) { app.client.coverArtUrl(pl.coverArt, 600) }
+            CoverAccentTheme(cover) {
             LazyColumn(Modifier.fillMaxSize().background(Navi.Bg), contentPadding = PaddingValues(bottom = 16.dp)) {
                 item {
                     TintedHeader(
@@ -213,6 +216,7 @@ fun PlaylistScreen(app: NaviApp, id: String, nav: NavController) {
                 itemsIndexed(pl.entry) { i, song ->
                     SongRow(song, onClick = { player.play(pl.entry, i) }, showCover = true)
                 }
+            }
             }
         }
         Load.Loading -> Column(Modifier.fillMaxSize()) { PlainBack { nav.popBackStack() }; CenteredProgress() }
