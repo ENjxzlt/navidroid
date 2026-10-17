@@ -40,6 +40,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Checkbox
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.BorderStroke
@@ -134,6 +135,37 @@ class RequestsVm(private val lidarr: LidarrClient, private val helper: HelperCli
         private set
     var choiceFor by mutableStateOf<LidarrAlbum?>(null)
         private set
+    var manualPrefill by mutableStateOf<String?>(null)
+        private set
+
+    fun openManual() {
+        manualPrefill = query.trim()
+    }
+
+    fun closeManual() {
+        manualPrefill = null
+    }
+
+    fun startManualImport(url: String, artist: String, album: String, year: Int?, thumbnail: String?, tracks: List<ManualTrack>) {
+        if (startingImport) return
+        startingImport = true
+        viewModelScope.launch {
+            try {
+                val job = helper.startManualJob(url, artist, album, year, thumbnail, tracks)
+                helperJobs = listOf(job) + helperJobs.filter { it.id != job.id }
+                manualPrefill = null
+                mode = RequestMode.Downloads
+                messages.tryEmit("Import von „${job.title}“ gestartet")
+                loadQueue()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                messages.tryEmit(e.message ?: "Import konnte nicht gestartet werden")
+            } finally {
+                startingImport = false
+            }
+        }
+    }
     var startingImport by mutableStateOf(false)
         private set
 
@@ -411,13 +443,23 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
                             EmptyHint("Keine Treffer")
                         }
                     },
-                    emptyFooter = if (helperReady) ({ PasteLinkButton { vm.openImport(null) } }) else null,
+                    emptyFooter = if (helperReady) ({
+                        Column {
+                            PasteLinkButton { vm.openImport(null) }
+                            ManualImportButton { vm.openManual() }
+                        }
+                    }) else null,
                 ) { list ->
                     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
                         items(list, key = { it.foreignId.ifEmpty { it.title } }) { album ->
                             AlbumResult(vm, album, helperReady)
                         }
-                        if (helperReady) item { PasteLinkButton { vm.openImport(null) } }
+                        if (helperReady) item {
+                            Column {
+                                PasteLinkButton { vm.openImport(null) }
+                                ManualImportButton { vm.openManual() }
+                            }
+                        }
                     }
                 }
             } else {
@@ -434,6 +476,7 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
 
     vm.importTarget?.let { target -> YouTubeImportSheet(app, vm, target) }
     vm.choiceFor?.let { album -> RequestChoiceSheet(album, vm) }
+    vm.manualPrefill?.let { prefill -> ManualImportSheet(app, vm, prefill) }
 
     confirmArtist?.let { artist ->
         AlertDialog(
@@ -792,6 +835,244 @@ private fun HelperJobCard(job: HelperJob, onRetry: () -> Unit, onRemove: () -> U
                 Surface(onClick = onRemove, shape = RoundedCornerShape(20.dp), color = Color.Transparent, border = BorderStroke(1.dp, Navi.Outline), modifier = Modifier.height(40.dp)) {
                     Box(Modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
                         Text("Entfernen", style = MaterialTheme.typography.labelLarge, color = Navi.Text)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManualImportButton(onClick: () -> Unit) {
+    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+        Text("Album nicht bei Lidarr? Ohne Lidarr importieren", color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+// ---- Import ohne Lidarr ----
+
+private class EditableTrack(val videoId: String, val source: String, title: String, selected: Boolean) {
+    var title by mutableStateOf(title)
+    var selected by mutableStateOf(selected)
+}
+
+private val teaserWords = Regex("(?i)\\b(teaser|trailer|snippet|interview|making of|behind the scenes)\\b")
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManualImportSheet(app: NaviApp, vm: RequestsVm, prefill: String) {
+    val scope = rememberCoroutineScope()
+    val accent = MaterialTheme.colorScheme.primary
+    var artist by rememberSaveable { mutableStateOf("") }
+    var album by rememberSaveable { mutableStateOf(prefill) }
+    var year by rememberSaveable { mutableStateOf("") }
+    var mode by remember { mutableStateOf(ImportMode.Search) }
+    var link by rememberSaveable { mutableStateOf("") }
+    var hits by remember { mutableStateOf<Load<List<SearchHit>>?>(null) }
+    var preview by remember { mutableStateOf<Load<ManualPreview>?>(null) }
+    val tracks = remember { mutableStateListOf<EditableTrack>() }
+    val canSearch = artist.isNotBlank() && album.isNotBlank()
+
+    fun loadPreview(url: String) {
+        link = url
+        preview = Load.Loading
+        scope.launch {
+            preview = try {
+                val p = app.helper.manualPreview(url, artist)
+                tracks.clear()
+                p.tracks.forEach { t -> tracks += EditableTrack(t.videoId, t.source, t.title, !teaserWords.containsMatchIn(t.source)) }
+                Load.Ok(p)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Load.Err(e.message ?: "Link konnte nicht gelesen werden")
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = vm::closeManual,
+        containerColor = Navi.Surface,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        val p = (preview as? Load.Ok)?.value
+        if (p != null) {
+            // Schritt 2: Titel prüfen
+            val selected = tracks.filter { it.selected }
+            LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(84.dp).clip(RoundedCornerShape(14.dp)).background(Navi.Outline)) {
+                            p.playlist.thumbnail?.let { AsyncImage(it, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize()) }
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(listOfNotNull("ALBUM", year.toIntOrNull()?.toString()).joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Navi.Muted)
+                            Text(album, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(artist, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = Color(0xFFC9CDD4))
+                            Text("${selected.size} von ${tracks.size} Titeln ausgewählt", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+                        }
+                    }
+                    TextButton(onClick = { preview = null }, contentPadding = PaddingValues(0.dp)) { Text("Andere Quelle wählen") }
+                }
+                itemsIndexed(tracks, key = { _, t -> t.videoId }) { _, t ->
+                    val number = if (t.selected) selected.indexOf(t) + 1 else null
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Checkbox(checked = t.selected, onCheckedChange = { t.selected = it })
+                        Text(number?.toString() ?: "–", modifier = Modifier.width(22.dp), style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold), color = Navi.Faint, textAlign = TextAlign.Center)
+                        Column(Modifier.weight(1f)) {
+                            androidx.compose.foundation.text.BasicTextField(
+                                value = t.title,
+                                onValueChange = { t.title = it },
+                                singleLine = true,
+                                enabled = t.selected,
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold, color = if (t.selected) Navi.Text else Navi.Faint),
+                                cursorBrush = androidx.compose.ui.graphics.SolidColor(accent),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            )
+                            Text(t.source, style = MaterialTheme.typography.bodySmall, color = Navi.Faint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+                item {
+                    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Ziel", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = Color(0xFFC9CDD4))
+                        Text(
+                            "Musikordner/$artist/$album" + (year.toIntOrNull()?.let { " ($it)" } ?: ""),
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                            textAlign = TextAlign.End,
+                        )
+                    }
+                }
+                item {
+                    Surface(
+                        onClick = {
+                            vm.startManualImport(
+                                link, artist, album, year.toIntOrNull(), p.playlist.thumbnail,
+                                selected.mapIndexed { i, t -> ManualTrack(t.videoId, t.title.trim().ifEmpty { "Titel ${i + 1}" }, i + 1) },
+                            )
+                        },
+                        enabled = selected.isNotEmpty() && !vm.startingImport,
+                        shape = RoundedCornerShape(26.dp),
+                        color = if (selected.isNotEmpty()) accent else Navi.Outline,
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) {
+                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            if (vm.startingImport) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                            else {
+                                Icon(Icons.Rounded.Download, null, tint = MaterialTheme.colorScheme.onPrimary)
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (selected.size == 1) "1 Titel importieren" else "${selected.size} Titel importieren", style = MaterialTheme.typography.labelLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize, fontWeight = FontWeight.ExtraBold), color = MaterialTheme.colorScheme.onPrimary)
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Schritt 1: Album angeben und Quelle suchen
+            LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                item {
+                    Column {
+                        Text("Ohne Lidarr importieren", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold))
+                        Text("Für Alben, die Lidarr nicht kennt · direkt in deine Bibliothek", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+                    }
+                }
+                item {
+                    OutlinedTextField(artist, { artist = it }, label = { Text("Künstler") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth())
+                }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(album, { album = it }, label = { Text("Album") }, singleLine = true, shape = RoundedCornerShape(12.dp), modifier = Modifier.weight(1f))
+                        OutlinedTextField(
+                            year, { v -> year = v.filter(Char::isDigit).take(4) }, label = { Text("Jahr") }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), shape = RoundedCornerShape(12.dp), modifier = Modifier.width(96.dp),
+                        )
+                    }
+                }
+                item {
+                    SegmentedControl(
+                        options = listOf(ImportMode.Search to "Auf YouTube suchen", ImportMode.Link to "Link einfügen"),
+                        selected = mode,
+                        onSelect = { mode = it },
+                    )
+                }
+                if (mode == ImportMode.Search) {
+                    item {
+                        Surface(
+                            onClick = {
+                                hits = Load.Loading
+                                scope.launch {
+                                    hits = try {
+                                        Load.Ok(app.helper.search("${artist.trim()} ${album.trim()}", null))
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Load.Err(e.message ?: "Suche fehlgeschlagen")
+                                    }
+                                }
+                            },
+                            enabled = canSearch,
+                            shape = RoundedCornerShape(22.dp),
+                            color = if (canSearch) Navi.Surface2 else Navi.Outline,
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(if (canSearch) "Suchen" else "Erst Künstler und Album angeben", style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
+                    }
+                    when (val h = hits) {
+                        null -> Unit
+                        Load.Loading -> item { CenteredProgress(Modifier.fillMaxWidth().padding(20.dp)) }
+                        is Load.Err -> item { Text(h.message, color = MaterialTheme.colorScheme.error) }
+                        is Load.Ok -> {
+                            if (h.value.isEmpty()) item { Text("Nichts gefunden – probier den Link.", color = Navi.Muted) }
+                            itemsIndexed(h.value, key = { _, x -> x.url }) { i, hit ->
+                                SearchHitCard(hit, best = i == 0) { loadPreview(hit.url) }
+                            }
+                        }
+                    }
+                } else {
+                    item {
+                        OutlinedTextField(
+                            value = link,
+                            onValueChange = { link = it },
+                            label = { Text("Playlist-Link") },
+                            placeholder = { Text("https://www.youtube.com/playlist?list=…") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    item {
+                        Surface(
+                            onClick = { loadPreview(link) },
+                            enabled = canSearch && link.isNotBlank(),
+                            shape = RoundedCornerShape(22.dp),
+                            color = if (canSearch && link.isNotBlank()) accent else Navi.Outline,
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text("Weiter", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold), color = MaterialTheme.colorScheme.onPrimary)
+                            }
+                        }
+                    }
+                }
+                when (val pv = preview) {
+                    Load.Loading -> item { CenteredProgress(Modifier.fillMaxWidth().padding(20.dp)) }
+                    is Load.Err -> item { Text(pv.message, color = MaterialTheme.colorScheme.error) }
+                    else -> Unit
+                }
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Navi.Surface2).padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(Icons.Rounded.ErrorOutline, null, tint = Navi.Muted, modifier = Modifier.size(18.dp))
+                        Text("Lidarr kennt dieses Album danach nicht: keine Überwachung und kein späteres Qualitäts-Upgrade.", style = MaterialTheme.typography.bodySmall, color = Color(0xFFC9CDD4))
                     }
                 }
             }

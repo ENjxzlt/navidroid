@@ -152,6 +152,20 @@ data class AiPlaylist(
 )
 
 @Serializable
+data class ManualTrackPreview(
+    val videoId: String,
+    val index: Int = 0,
+    val title: String = "",
+    val source: String = "",
+    val seconds: Double? = null,
+)
+
+@Serializable
+data class ManualPreview(val playlist: PlaylistInfo = PlaylistInfo(), val tracks: List<ManualTrackPreview> = emptyList())
+
+data class ManualTrack(val videoId: String, val title: String, val number: Int)
+
+@Serializable
 data class SkippedTrack(val title: String = "", val reason: String = "")
 
 @Serializable
@@ -263,6 +277,34 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     }
 
     suspend fun jobs(): List<HelperJob> = decode(send(config(), "GET", "api/jobs"))
+
+    suspend fun manualPreview(url: String, artist: String): ManualPreview {
+        val body = buildJsonObject {
+            put("url", url.trim())
+            put("artist", artist.trim())
+        }
+        return decode(send(config(), "POST", "api/manual/preview", body.toString()))
+    }
+
+    suspend fun startManualJob(url: String, artist: String, album: String, year: Int?, thumbnail: String?, tracks: List<ManualTrack>): HelperJob {
+        val body = buildJsonObject {
+            put("url", url.trim())
+            put("artist", artist.trim())
+            put("album", album.trim())
+            if (year != null) put("year", year)
+            if (thumbnail != null) put("thumbnail", thumbnail)
+            put("tracks", buildJsonArray {
+                tracks.forEach { t ->
+                    add(buildJsonObject {
+                        put("videoId", t.videoId)
+                        put("title", t.title)
+                        put("number", t.number)
+                    })
+                }
+            })
+        }
+        return decode(send(config(), "POST", "api/manual/jobs", body.toString()))
+    }
 
     /** KI-Playlist über den Claude-Worker; der Helfer liest dafür die Bibliothek mit den Navidrome-Zugangsdaten. */
     suspend fun aiPlaylist(

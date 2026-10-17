@@ -22,6 +22,7 @@ Android-Client für [Navidrome](https://www.navidrome.org/) (Subsonic-API), gesc
   (über einen bestehenden Claude-Code-Worker per SSH, siehe unten)
 - Playlists anlegen, umbenennen, sortieren (Ziehen), Titel hinzufügen/entfernen, löschen – gespeichert in Navidrome
 - Beim Anfordern Quelle wählen: Lidarr oder direkt YouTube; YouTube-Suche mit Abgleich der Album-Titel
+- Import ohne Lidarr: für Alben, die MusicBrainz/Lidarr nicht kennen – direkt als MP3 in den Musikordner
 - Fehlende Alben aus YouTube-Playlists oder „Full Album“-Videos mit Kapiteln holen (optionaler YouTube-Helfer, siehe unten)
 - Optionale Musikvideos im Player (stumm und synchron zum Song)
 - In-App-Updates über GitHub Releases
@@ -53,6 +54,10 @@ Einrichtung:
 nur mit der Titelliste als Daten. Dafür im Helfer `CLAUDE_WORKER` (z. B. `claude@192.168.178.179`) und
 `CLAUDE_WORKER_PORT` setzen und den öffentlichen Schlüssel aus `/data/claude_worker_ed25519.pub` beim Worker
 eintragen.
+
+**Import ohne Lidarr (optional):** Musikordner beschreibbar in den Helfer einbinden (z. B.
+`/pfad/zu/musik:/music`) und `MUSIC_DIR=/music` setzen. Die Dateien landen unter `Künstler/Album (Jahr)/`,
+vorhandene Dateien werden nie überschrieben.
 
 **Altersbeschränkte Videos:** Dafür verlangt YouTube eine Anmeldung. Exportiere die Cookies eines
 angemeldeten Browsers im Netscape-Format (z. B. mit der Erweiterung „Get cookies.txt LOCALLY“) und lege sie als
