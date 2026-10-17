@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -36,6 +39,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Lyrics
@@ -105,12 +109,18 @@ fun HomeScreen(
     onCheckUpdates: () -> Unit,
     onLogout: () -> Unit,
 ) {
-    Box(Modifier.fillMaxSize().background(Navi.Bg)) {
-        when (tab) {
-            HomeTab.Start -> HomeStartTab(app, nav, onOpenSettings = { nav.navigate(Routes.SETTINGS) })
-            HomeTab.Library -> LibraryTab(app, nav)
-            HomeTab.Search -> SearchTab(app, nav)
-            HomeTab.Requests -> Column(Modifier.fillMaxSize()) { RequestsTab(app) }
+    val offline = !app.offline.online
+    Column(Modifier.fillMaxSize().background(Navi.Bg)) {
+        if (offline) OfflineBanner(onClick = { nav.navigate(Routes.DOWNLOADS) })
+        // Unter dem Band brauchen die Tabs keinen Abstand mehr für die Statusleiste.
+        Box(Modifier.weight(1f).then(if (offline) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)) {
+            when (tab) {
+                // Ohne Verbindung zeigt der Start-Tab, was offline verfügbar ist.
+                HomeTab.Start -> if (offline) DownloadsContent(app, nav, onBack = null) else HomeStartTab(app, nav, onOpenSettings = { nav.navigate(Routes.SETTINGS) })
+                HomeTab.Library -> LibraryTab(app, nav)
+                HomeTab.Search -> SearchTab(app, nav)
+                HomeTab.Requests -> Column(Modifier.fillMaxSize()) { RequestsTab(app) }
+            }
         }
     }
 }
@@ -248,6 +258,7 @@ private fun LibraryTab(app: NaviApp, nav: NavController) {
     var section by rememberSaveable { mutableStateOf(LibrarySection.Playlists) }
     Column(Modifier.fillMaxSize()) {
         ScreenTitle("Bibliothek")
+        DownloadsEntry(app) { nav.navigate(Routes.DOWNLOADS) }
         SegmentedControl(
             options = LibrarySection.entries.map { it to it.label },
             selected = section,
@@ -258,6 +269,30 @@ private fun LibraryTab(app: NaviApp, nav: NavController) {
             LibrarySection.Artists -> ArtistsList(app, nav)
             LibrarySection.Albums -> AlbumsBrowser(app, nav)
             LibrarySection.Playlists -> PlaylistsList(app, nav)
+        }
+    }
+}
+
+/** Eintrag „Heruntergeladen“ oben in der Bibliothek. */
+@Composable
+private fun DownloadsEntry(app: NaviApp, onClick: () -> Unit) {
+    val offline = app.offline
+    val count = offline.downloadedCount
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 20.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(Modifier.size(44.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
+            Icon(Icons.Rounded.DownloadForOffline, null, tint = MaterialTheme.colorScheme.onPrimary)
+        }
+        Column(Modifier.weight(1f)) {
+            Text("Heruntergeladen", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold))
+            Text(
+                if (count == 0) "Musik für unterwegs ohne Netz" else "$count Titel · ${formatBytes(offline.totalBytes)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Navi.Muted,
+            )
         }
     }
 }

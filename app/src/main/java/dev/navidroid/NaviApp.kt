@@ -13,6 +13,7 @@ import dev.navidroid.lidarr.HelperClient
 import dev.navidroid.lidarr.HelperStore
 import dev.navidroid.lidarr.LidarrClient
 import dev.navidroid.lidarr.LidarrStore
+import dev.navidroid.offline.OfflineManager
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -37,6 +38,8 @@ class NaviApp : Application(), ImageLoaderFactory {
         private set
     lateinit var helper: HelperClient
         private set
+    lateinit var offline: OfflineManager
+        private set
 
     val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -57,6 +60,7 @@ class NaviApp : Application(), ImageLoaderFactory {
         lidarr = LidarrClient(http, lidarrStore)
         helperStore = HelperStore(this)
         helper = HelperClient(http, helperStore)
+        offline = OfflineManager(this).also { it.start() }
     }
 
     override fun newImageLoader(): ImageLoader =

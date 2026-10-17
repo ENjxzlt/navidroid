@@ -128,6 +128,13 @@ fun SettingsScreen(app: NaviApp, nav: NavController, onCheckUpdates: () -> Unit,
                 ValueRow("Streaming-Qualität Mobil", "Spart Datenvolumen", AppSettings.label(s.mobileBitrate)) { dialog = "mobile" }
             }
 
+            Section("Downloads") {
+                ValueRow("Heruntergeladen", "${app.offline.downloadedCount} Titel · ${formatBytes(app.offline.totalBytes)}", null) { nav.navigate(Routes.DOWNLOADS) }
+                ToggleRow("Nur im WLAN laden", "Mobil wird erst weitergeladen, wenn WLAN da ist", app.offline.wifiOnly) { app.offline.wifiOnly = it }
+                ValueRow("Download-Qualität", "Gilt für neue Downloads", AppSettings.label(app.offline.quality)) { dialog = "dlquality" }
+                ToggleRow("Playlists & Mixe aktuell halten", "Neue Titel automatisch nachladen", app.offline.autoSync) { app.offline.autoSync = it }
+            }
+
             Section("Songtexte & Anzeige") {
                 ToggleRow("Online-Songtexte (LRCLIB)", "Wenn Navidrome keinen Text hat", onlineLyrics) {
                     onlineLyrics = it
@@ -192,6 +199,7 @@ fun SettingsScreen(app: NaviApp, nav: NavController, onCheckUpdates: () -> Unit,
 
     when (dialog) {
         "wifi" -> ChoiceDialog("Streaming-Qualität WLAN", AppSettings.bitrateOptions, s.wifiBitrate, { dialog = null }) { s.wifiBitrate = it }
+        "dlquality" -> ChoiceDialog("Download-Qualität", AppSettings.bitrateOptions, app.offline.quality, { dialog = null }) { app.offline.quality = it }
         "mobile" -> ChoiceDialog("Streaming-Qualität Mobil", AppSettings.bitrateOptions, s.mobileBitrate, { dialog = null }) { s.mobileBitrate = it }
         "source" -> ChoiceDialog(
             "Beim Anfordern",

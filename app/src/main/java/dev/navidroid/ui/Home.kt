@@ -218,7 +218,15 @@ fun MixScreen(app: NaviApp, id: String, nav: NavController) {
     val player = LocalPlayer.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val loader = rememberLoad("mix:$id") { app.mixes.mix(id) ?: app.mixes.mixes().first { it.id == id } }
+    val loader = rememberLoad("mix:$id") {
+        try {
+            app.mixes.mix(id) ?: app.mixes.mixes().first { it.id == id }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            app.offline.collection("mix:$id")?.let { c -> dev.navidroid.data.Mix(id, c.name, c.subtitle.orEmpty(), c.songs, 0.6f) } ?: throw e
+        }
+    }
     when (val s = loader.state) {
         Load.Loading -> CenteredProgress()
         is Load.Err -> ErrorView(s.message, loader.reload)
@@ -237,18 +245,23 @@ fun MixScreen(app: NaviApp, id: String, nav: NavController) {
                             Column(Modifier.padding(bottom = 30.dp)) {
                                 Text("MIX · ${mix.songs.size} TITEL", style = MaterialTheme.typography.labelSmall, color = mutedOn(mixColor(mix.hue, 0.16f)))
                                 Text(mix.name, style = MaterialTheme.typography.headlineSmall)
-                                Text("Täglich neu gemischt", style = MaterialTheme.typography.bodySmall, color = mutedOn(mixColor(mix.hue, 0.16f)))
+                                Text(downloadLine(app.offline.collection("mix:${mix.id}")?.let { app.offline.progress(it) }) ?: "Täglich neu gemischt", style = MaterialTheme.typography.bodySmall, color = mutedOn(mixColor(mix.hue, 0.16f)))
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Surface(onClick = { player.play(mix.songs) }, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).height(48.dp)) {
+                            Surface(onClick = { player.play(mix.songs.playableNow(app)) }, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f).height(48.dp)) {
                                 Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Rounded.PlayArrow, null, tint = MaterialTheme.colorScheme.onPrimary)
                                     Spacer(Modifier.width(6.dp))
                                     Text("Abspielen", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold), color = MaterialTheme.colorScheme.onPrimary)
                                 }
                             }
-                            RoundIconButton(Icons.Rounded.Shuffle, "Zufällig abspielen", { player.play(mix.songs, shuffle = true) }, container = Color.White.copy(alpha = 0.1f), size = 48)
+                            DownloadToggle(
+                                app.offline.collection("mix:${mix.id}")?.let { app.offline.progress(it) },
+                                { app.offline.downloadMix(mix.id, mix.name, mix.description, mix.songs) },
+                                { app.offline.remove("mix:${mix.id}") },
+                            )
+                            RoundIconButton(Icons.Rounded.Shuffle, "Zufällig abspielen", { player.play(mix.songs.playableNow(app), shuffle = true) }, container = Color.White.copy(alpha = 0.1f), size = 48)
                             RoundIconButton(Icons.AutoMirrored.Rounded.PlaylistAdd, "Als Playlist speichern", {
                                 scope.launch {
                                     try {
@@ -267,7 +280,7 @@ fun MixScreen(app: NaviApp, id: String, nav: NavController) {
                 }
                 item { Spacer(Modifier.height(8.dp)) }
                 itemsIndexed(mix.songs) { i, song ->
-                    SongRow(song, onClick = { player.play(mix.songs, i) }, showCover = true)
+                    SongRow(song, onClick = { playFrom(app, player, mix.songs, i) }, showCover = true)
                 }
             }
         }

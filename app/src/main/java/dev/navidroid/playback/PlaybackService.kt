@@ -6,7 +6,11 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.google.common.util.concurrent.Futures
@@ -22,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -39,6 +44,17 @@ class PlaybackService : MediaSessionService() {
                 true,
             )
             .setHandleAudioBecomingNoisy(true)
+            // Heruntergeladene Titel kommen aus dem Offline-Speicher; gestreamte Titel werden dort nicht abgelegt.
+            .setMediaSourceFactory(
+                DefaultMediaSourceFactory(
+                    CacheDataSource.Factory()
+                        .setCache(app.offline.cache)
+                        .setUpstreamDataSourceFactory(
+                            DefaultDataSource.Factory(this, DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true))
+                        )
+                        .setCacheWriteDataSinkFactory(null)
+                )
+            )
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
@@ -69,7 +85,13 @@ class PlaybackService : MediaSessionService() {
             val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
             val bitrate = if (cm?.isActiveNetworkMetered == true) app.settings.mobileBitrate else app.settings.wifiBitrate
             return Futures.immediateFuture(
-                mediaItems.map { it.buildUpon().setUri(app.client.streamUrl(it.mediaId, bitrate)).build() }.toMutableList()
+                mediaItems.map { item ->
+                    item.buildUpon()
+                        .setUri(app.client.streamUrl(item.mediaId, bitrate))
+                        // Gleicher Schlüssel wie beim Download – dann liest der Player die Datei vom Gerät.
+                        .setCustomCacheKey(if (app.offline.isDownloaded(item.mediaId)) item.mediaId else null)
+                        .build()
+                }.toMutableList()
             )
         }
     }

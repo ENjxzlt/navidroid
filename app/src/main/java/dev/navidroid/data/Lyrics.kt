@@ -9,10 +9,13 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
+@Serializable
 data class LyricWord(val text: String, val startMs: Long, val endMs: Long)
 
+@Serializable
 data class LyricLine(val startMs: Long, val endMs: Long, val text: String, val words: List<LyricWord>)
 
+@Serializable
 data class Lyrics(val synced: Boolean, val lines: List<LyricLine>, val source: String) {
     /** Index der Zeile, die zur Position gehört, oder -1 vor der ersten Zeile. */
     fun lineAt(positionMs: Long): Int {
@@ -123,6 +126,7 @@ class LyricsRepository(context: Context, private val http: OkHttpClient, private
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
     private val cache = HashMap<String, Lyrics?>()
+    private val offlineDir = java.io.File(context.filesDir, "offline/lyrics")
 
     var onlineLyrics: Boolean
         get() = prefs.getBoolean("lrclib", true)
@@ -137,6 +141,14 @@ class LyricsRepository(context: Context, private val http: OkHttpClient, private
 
     suspend fun load(song: SongRef): Lyrics? {
         synchronized(cache) { if (cache.containsKey(song.id)) return cache[song.id] }
+        // Für heruntergeladene Titel liegt der Text auf dem Gerät.
+        withContext(Dispatchers.IO) {
+            val f = java.io.File(offlineDir, "${song.id}.json")
+            if (f.exists()) runCatching { json.decodeFromString<Lyrics>(f.readText()) }.getOrNull() else null
+        }?.let { saved ->
+            synchronized(cache) { cache[song.id] = saved }
+            return saved
+        }
         val fromServer = runCatching { client.lyrics(song.id) }.getOrDefault(emptyList())
             .filter { it.line.isNotEmpty() }
         val serverSynced = fromServer.firstOrNull { it.synced }
@@ -152,6 +164,17 @@ class LyricsRepository(context: Context, private val http: OkHttpClient, private
         }
         synchronized(cache) { cache[song.id] = result }
         return result
+    }
+
+    /** Lädt den Songtext und legt ihn für die Offline-Nutzung in [dir] ab. */
+    suspend fun saveOffline(song: SongRef, dir: java.io.File) {
+        val f = java.io.File(dir, "${song.id}.json")
+        if (f.exists()) return
+        val lyrics = load(song) ?: return
+        withContext(Dispatchers.IO) {
+            dir.mkdirs()
+            f.writeText(json.encodeToString(Lyrics.serializer(), lyrics))
+        }
     }
 
     private suspend fun lrcLib(song: SongRef): LrcLibResult? = withContext(Dispatchers.IO) {

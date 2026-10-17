@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">NaviDroid</string>
+    <string name="downloads_channel">Downloads</string>
+    <string name="downloads_channel_description">Fortschritt der Offline-Downloads</string>
 </resources>

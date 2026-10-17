@@ -99,6 +99,8 @@ object Routes {
     const val LYRICS = "lyrics"
     const val AI_PLAYLIST = "ai-playlist"
     const val SETTINGS = "settings"
+    const val DOWNLOADS = "downloads"
+    const val OFFLINE_COLLECTION = "offline/{id}"
 }
 
 fun NavController.openAlbum(id: String) = navigate("album/$id")
@@ -479,6 +481,8 @@ fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boo
     val current = playerState.mediaId == song.id
     val accent = MaterialTheme.colorScheme.primary
     var menu by remember { mutableStateOf(false) }
+    val offline = rememberOffline()
+    val startDownload = rememberDownloadStarter()
 
     Row(
         Modifier
@@ -512,7 +516,10 @@ fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boo
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(song.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SongDownloadMark(song.id)
+                Text(song.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         // Länge 0 heißt: Navidrome konnte die Datei nicht auslesen – dann lieber nichts anzeigen.
         if (song.duration > 0) {
@@ -536,6 +543,14 @@ fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boo
                         addToPlaylist(listOf(song), song.title, song.artist.orEmpty(), song.coverArt)
                     },
                 )
+                if (offline.songs.containsKey(song.id)) {
+                    DropdownMenuItem(text = { Text("Download entfernen") }, onClick = { menu = false; offline.removeSong(song.id) })
+                } else {
+                    DropdownMenuItem(text = { Text("Herunterladen") }, onClick = {
+                        menu = false
+                        startDownload { offline.downloadSongs(listOf(song)) }
+                    })
+                }
                 DropdownMenuItem(
                     text = { Text("Zur Warteschlange hinzufügen") },
                     onClick = {

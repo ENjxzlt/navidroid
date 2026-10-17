@@ -73,6 +73,8 @@ private fun TintedHeader(
     onToggleStar: () -> Unit = {},
     onAddToPlaylist: (() -> Unit)? = null,
     onEdit: (() -> Unit)? = null,
+    downloadStatus: String? = null,
+    download: (@Composable () -> Unit)? = null,
 ) {
     val tint = rememberCoverTint(coverUrl, alternative = alternative)
     val soft = mutedOn(tint)
@@ -100,6 +102,9 @@ private fun TintedHeader(
                     )
                 }
                 Text(meta, style = MaterialTheme.typography.bodySmall, color = soft)
+                downloadStatus?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                }
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -115,6 +120,7 @@ private fun TintedHeader(
                     Text("Abspielen", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.ExtraBold), color = MaterialTheme.colorScheme.onPrimary)
                 }
             }
+            download?.invoke()
             OutlineCircle(Icons.Rounded.Shuffle, "Zufällig abspielen", onShuffle)
             onAddToPlaylist?.let { OutlineCircle(Icons.AutoMirrored.Rounded.PlaylistAdd, "Zur Playlist hinzufügen", it) }
             onEdit?.let { OutlineCircle(Icons.Rounded.Edit, "Playlist bearbeiten", it) }
@@ -154,7 +160,15 @@ private fun PlainBack(onBack: () -> Unit) {
 fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
     val player = LocalPlayer.current
     val scope = rememberCoroutineScope()
-    val loader = rememberLoad("album:$id") { app.client.album(id) }
+    val loader = rememberLoad("album:$id") {
+        try {
+            app.client.album(id)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            app.offline.album(id) ?: throw e
+        }
+    }
     when (val s = loader.state) {
         is Load.Ok -> {
             val album = s.value
@@ -163,6 +177,7 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
             val alternative: CoverAlternative = remember(album.id) {
                 { app.covers.forAlbumInfo(album.musicBrainzId, album.name, album.artist, 500) }
             }
+            val dl = app.offline.collection("album:${album.id}")?.let { app.offline.progress(it) }
             val multiDisc = album.song.mapNotNull { it.discNumber }.distinct().size > 1
             CoverAccentTheme(cover, alternative) {
             LazyColumn(Modifier.fillMaxSize().background(Navi.Bg), contentPadding = PaddingValues(bottom = 16.dp)) {
@@ -175,11 +190,13 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
                         subtitle = album.artist,
                         meta = listOfNotNull("${album.songCount} Titel", album.duration.takeIf { it > 0 }?.let(::formatLong)).joinToString(" · "),
                         onBack = { nav.popBackStack() },
-                        onPlay = { player.play(album.song) },
-                        onShuffle = { player.play(album.song, shuffle = true) },
+                        onPlay = { player.play(album.song.playableNow(app)) },
+                        onShuffle = { player.play(album.song.playableNow(app), shuffle = true) },
                         onSubtitleClick = album.artistId?.let { artistId -> { nav.openArtist(artistId) } },
                         starred = starred,
                         onAddToPlaylist = { addToPlaylist(album.song, album.name, album.artist.orEmpty(), album.coverArt) },
+                        downloadStatus = downloadLine(dl),
+                        download = { DownloadToggle(dl, { app.offline.downloadAlbum(album) }, { app.offline.remove("album:${album.id}") }) },
                         onToggleStar = {
                             val target = !starred
                             starred = target
@@ -193,7 +210,7 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
                 item { Spacer(Modifier.height(8.dp)) }
                 itemsIndexed(album.song, key = { _, song -> song.id }) { i, song ->
                     val number = song.track?.let { t -> if (multiDisc && song.discNumber != null) song.discNumber * 100 + t else t }
-                    SongRow(song, onClick = { player.play(album.song, i) }, number = number)
+                    SongRow(song, onClick = { playFrom(app, player, album.song, i) }, number = number)
                 }
             }
             }
@@ -206,11 +223,20 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
 @Composable
 fun PlaylistScreen(app: NaviApp, id: String, nav: NavController) {
     val player = LocalPlayer.current
-    val loader = rememberLoad("playlist:$id:${PlaylistBus.version}") { app.client.playlist(id) }
+    val loader = rememberLoad("playlist:$id:${PlaylistBus.version}") {
+        try {
+            app.client.playlist(id)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            app.offline.playlist(id) ?: throw e
+        }
+    }
     when (val s = loader.state) {
         is Load.Ok -> {
             val pl = s.value
             val cover = remember(pl.coverArt) { app.client.coverArtUrl(pl.coverArt, 600) }
+            val dl = app.offline.collection("playlist:${pl.id}")?.let { app.offline.progress(it) }
             CoverAccentTheme(cover) {
             LazyColumn(Modifier.fillMaxSize().background(Navi.Bg), contentPadding = PaddingValues(bottom = 16.dp)) {
                 item {
@@ -222,14 +248,16 @@ fun PlaylistScreen(app: NaviApp, id: String, nav: NavController) {
                         subtitle = pl.comment?.takeIf { it.isNotBlank() } ?: pl.owner,
                         meta = listOfNotNull("${pl.songCount} Titel", pl.duration.takeIf { it > 0 }?.let(::formatLong)).joinToString(" · "),
                         onBack = { nav.popBackStack() },
-                        onPlay = { player.play(pl.entry) },
-                        onShuffle = { player.play(pl.entry, shuffle = true) },
+                        onPlay = { player.play(pl.entry.playableNow(app)) },
+                        onShuffle = { player.play(pl.entry.playableNow(app), shuffle = true) },
                         onEdit = { nav.editPlaylist(pl.id) },
+                        downloadStatus = downloadLine(dl),
+                        download = { DownloadToggle(dl, { app.offline.downloadPlaylist(pl) }, { app.offline.remove("playlist:${pl.id}") }) },
                     )
                 }
                 item { Spacer(Modifier.height(8.dp)) }
                 itemsIndexed(pl.entry) { i, song ->
-                    SongRow(song, onClick = { player.play(pl.entry, i) }, showCover = true)
+                    SongRow(song, onClick = { playFrom(app, player, pl.entry, i) }, showCover = true)
                 }
             }
             }
@@ -274,4 +302,15 @@ fun ArtistScreen(app: NaviApp, id: String, nav: NavController) {
             }
         }
     }
+}
+
+/** Ohne Verbindung nur heruntergeladene Titel. */
+fun List<dev.navidroid.data.Song>.playableNow(app: NaviApp) =
+    if (app.offline.online) this else filter { app.offline.isDownloaded(it.id) }
+
+/** Ab Titel [index] abspielen; offline werden nicht geladene Titel übersprungen. */
+fun playFrom(app: NaviApp, player: dev.navidroid.playback.PlayerConnection, songs: List<dev.navidroid.data.Song>, index: Int) {
+    val list = songs.playableNow(app)
+    val start = list.indexOfFirst { it.id == songs[index].id }
+    if (start >= 0) player.play(list, start)
 }
