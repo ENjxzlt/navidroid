@@ -28,9 +28,19 @@ TRACKS = [
 ]
 
 
+CHAPTERS = [{"title": "First Song", "start_time": 0.0, "end_time": 1.0},
+            {"title": "Second Song", "start_time": 1.0, "end_time": 2.0}]
+
+
 class FakeYDL:
     def __init__(self, opts):
         self.opts = opts
+
+    def extract_info(self, url, download=False):
+        if download:
+            out = Path(self.opts["outtmpl"].replace("%(ext)s", "webm"))
+            subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=duration=2", "-c:a", "libopus", "-y", str(out)], check=True)
+        return {"id": "full", "chapters": CHAPTERS}
 
     def __enter__(self):
         return self
@@ -102,6 +112,39 @@ class JobTest(unittest.TestCase):
         self.assertEqual([f["trackIds"] for f in files], [[101], [102]])
         self.assertTrue(all(f["albumId"] == 7 and f["artistId"] == 3 and f["albumReleaseId"] == 70 for f in files))
         self.assertFalse((app.STAGING / "job1").exists())
+
+
+class ChapterJobTest(unittest.TestCase):
+    def test_chapters_are_cut_into_tracks(self):
+        def fake_lidarr(method, path, **kw):
+            if path == "album/7":
+                return ALBUM
+            if path == "track":
+                return [dict(t) for t in TRACKS]
+            if path == "manualimport":
+                local = app.STAGING / job["id"]
+                folder = kw["params"]["folder"]
+                return [{"path": f"{folder}/{p.name}", "quality": {}} for p in sorted(local.iterdir())]
+            if path == "command" and method == "POST":
+                seen.append(sorted(Path(f["path"]).name for f in kw["json"]["files"]))
+                return {"id": 1}
+            if path == "command/1":
+                return {"status": "completed"}
+            raise AssertionError(path)
+
+        seen = []
+        job = {
+            "id": "job2", "albumId": 7, "artist": "Test Artist", "videos": False,
+            "mapping": [{"trackId": 101, "videoId": "full#1"}, {"trackId": 102, "videoId": "full#2"}],
+            "steps": [{"key": k, "label": k, "done": 0, "total": 2, "state": "todo"} for k in ("download", "convert", "tag", "import")],
+            "status": "running", "createdAt": 0,
+        }
+        app._jobs[job["id"]] = job
+        with mock.patch.object(app, "YoutubeDL", FakeYDL), mock.patch.object(app, "lidarr", fake_lidarr):
+            app.run_job(job)
+        # Quell-Tonspur wurde vor dem Import entfernt, nur die zwei Titel gehen an Lidarr
+        self.assertEqual(seen, [["01 - First Song.mp3", "02 - Second Song.mp3"]])
+        self.assertEqual([s["state"] for s in job["steps"]], ["done"] * 4)
 
 
 if __name__ == "__main__":

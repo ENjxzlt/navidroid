@@ -11,8 +11,11 @@ Ablauf eines Imports:
 """
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
+import subprocess
+import urllib.parse
 import logging
 import os
 import queue
@@ -118,14 +121,24 @@ def playlist_entries(url: str) -> tuple[dict, list[dict]]:
             info = ydl.extract_info(url, download=False)
     except Exception as e:  # yt-dlp wirft viele eigene Fehlertypen
         raise HTTPException(400, f"YouTube-Link konnte nicht gelesen werden: {e}") from e
-    raw = info.get("entries") if info.get("_type") == "playlist" else [info]
+    is_playlist = info.get("_type") == "playlist"
+    chapters = [] if is_playlist else (info.get("chapters") or [])
     entries = []
-    for i, e in enumerate(raw or [], 1):
-        if not e or not e.get("id"):
-            continue
-        entries.append({"id": e["id"], "index": i, "title": e.get("title") or "", "seconds": e.get("duration")})
+    if len(chapters) >= 2:
+        # Ein "Full Album"-Video mit Kapiteln: jedes Kapitel wird ein eigener Titel ("videoId#n").
+        for i, c in enumerate(chapters, 1):
+            start, end = float(c.get("start_time") or 0), float(c.get("end_time") or 0)
+            entries.append({"id": f"{info['id']}#{i}", "index": i, "title": c.get("title") or f"Kapitel {i}",
+                            "seconds": round(end - start, 2) if end > start else None})
+    else:
+        raw = info.get("entries") if is_playlist else [info]
+        for i, e in enumerate(raw or [], 1):
+            if not e or not e.get("id"):
+                continue
+            entries.append({"id": e["id"], "index": i, "title": e.get("title") or "", "seconds": e.get("duration")})
     thumbs = info.get("thumbnails") or []
     meta = {
+        "kind": "chapters" if len(chapters) >= 2 else ("playlist" if is_playlist else "video"),
         "title": info.get("title") or "",
         "uploader": info.get("uploader") or info.get("channel"),
         "count": len(entries),
@@ -210,9 +223,26 @@ def run_job(job: dict) -> None:
     # 1+2: Laden und in MP3 umwandeln
     _update(job, "download", state="active")
     files: dict[int, Path] = {}
+    sources: dict[str, tuple[Path, list[dict]]] = {}
     for track, vid in plan:
         number = track.get("absoluteTrackNumber") or 0
         base = f"{number:02d} - {safe_name(track['title'])}"
+        if "#" in vid:
+            source_id, chapter = vid.split("#", 1)
+            if source_id not in sources:
+                sources[source_id] = _download_source(source_id, workdir)
+            src, chapters = sources[source_id]
+            c = chapters[int(chapter) - 1]
+            mp3 = workdir / f"{base}.mp3"
+            cmd = ["ffmpeg", "-loglevel", "error", "-y", "-ss", str(c.get("start_time") or 0)]
+            if c.get("end_time"):
+                cmd += ["-to", str(c["end_time"])]
+            cmd += ["-i", str(src), "-vn", "-c:a", "libmp3lame", "-b:a", f"{AUDIO_QUALITY}k", str(mp3)]
+            subprocess.run(cmd, check=True)
+            _update(job, "download", done=next(s for s in job["steps"] if s["key"] == "download")["done"] + 1)
+            files[track["id"]] = mp3
+            _update(job, "convert", state="active", done=len(files))
+            continue
         opts = {
             "quiet": True,
             "noprogress": True,
@@ -270,6 +300,9 @@ def run_job(job: dict) -> None:
         tags.save(path, v2_version=3)
         _update(job, "tag", done=i)
     _update(job, "tag", state="done")
+
+    for p in workdir.glob("_src_*"):
+        p.unlink(missing_ok=True)
 
     # 4: Lidarr importiert und benennt die Dateien selbst
     _update(job, "import", state="active")
@@ -349,6 +382,24 @@ def run_job(job: dict) -> None:
         _update(job, "videos", state="done")
 
 
+def _download_source(video_id: str, workdir: Path) -> tuple[Path, list[dict]]:
+    """Lädt die Tonspur eines Kapitel-Videos einmal herunter und liefert sie mit den Kapiteln."""
+    opts = {
+        "quiet": True,
+        "noprogress": True,
+        "noplaylist": True,
+        "format": "bestaudio/best",
+        "outtmpl": str(workdir / f"_src_{video_id}.%(ext)s"),
+    }
+    with YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(video_url(video_id), download=True)
+    chapters = info.get("chapters") or []
+    found = sorted(glob.glob(str(workdir / f"_src_{video_id}.*")))
+    if not found or not chapters:
+        raise RuntimeError("Video ohne Kapitel konnte nicht aufgeteilt werden")
+    return Path(found[0]), chapters
+
+
 def worker() -> None:
     while True:
         job_id = _queue.get()
@@ -422,6 +473,72 @@ def preview(req: PreviewRequest) -> dict:
         "targetFolder": f"{artist_path}/{album['title']}" + (f" ({year})" if year else ""),
     })
     return result
+
+
+class SearchRequest(BaseModel):
+    query: str
+    albumId: int | None = None
+
+
+def _search_flat(url: str, limit: int) -> list[dict]:
+    opts = {"quiet": True, "skip_download": True, "extract_flat": True, "noprogress": True, "playlistend": limit}
+    with YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    return [e for e in (info.get("entries") or []) if e][:limit]
+
+
+@app.post("/api/search", dependencies=[Depends(require_token)])
+def search(req: SearchRequest) -> list[dict]:
+    query = req.query.strip()
+    if not query:
+        raise HTTPException(400, "Suchbegriff fehlt")
+    tracks: list[dict] = []
+    artist = ""
+    if req.albumId is not None:
+        album, album_tracks, _ = album_info(req.albumId)
+        artist = (album.get("artist") or {}).get("artistName") or ""
+        tracks = [{"id": t["id"], "number": t.get("absoluteTrackNumber") or 0, "title": t["title"],
+                   "seconds": (t.get("duration") or 0) / 1000 or None} for t in album_tracks]
+
+    candidates: list[str] = []
+    try:
+        # Playlists (Filter "Playlist" der YouTube-Suche)
+        q = urllib.parse.quote(query)
+        for e in _search_flat(f"https://www.youtube.com/results?search_query={q}&sp=EgIQAw%253D%253D", 4):
+            url = e.get("url") or ""
+            if "list=" in url:
+                candidates.append(url)
+        # Einzelne "Full Album"-Videos – nur sinnvoll, wenn sie Kapitel haben
+        for e in _search_flat(f"ytsearch4:{query} full album", 4):
+            if (e.get("duration") or 0) >= 600 and e.get("id"):
+                candidates.append(video_url(e["id"]))
+    except Exception as e:  # yt-dlp-Fehler
+        raise HTTPException(502, f"YouTube-Suche fehlgeschlagen: {e}") from e
+
+    hits = []
+    for url in candidates:
+        try:
+            meta, entries = playlist_entries(url)
+        except HTTPException:
+            continue
+        if meta["kind"] == "video" or not entries:
+            continue  # Video ohne Kapitel lässt sich nicht in Titel teilen
+        matched = 0
+        if tracks:
+            rows, _ = match(tracks, entries, artist)
+            matched = sum(1 for r in rows if r["videoId"])
+        hits.append({**meta, "url": url, "matched": matched, "total": len(tracks), "extra": max(0, len(entries) - matched)})
+    # Abweichende Fassungen nach hinten, außer man sucht ausdrücklich danach.
+    noise = ("instrumental", "karaoke", "live", "cover", "reaction", "remix", "slowed", "sped up", "8d", "nightcore")
+    q_lower = query.lower()
+
+    def penalty(h: dict) -> int:
+        t = h["title"].lower()
+        return int(any(w in t and w not in q_lower for w in noise))
+
+    # Beste Übereinstimmung zuerst: Originalfassung, meiste Titel, wenigste überzählige Videos, Playlists vor Kapiteln
+    hits.sort(key=lambda h: (penalty(h), -h["matched"], h["extra"], h["kind"] != "playlist"))
+    return hits
 
 
 @app.post("/api/jobs", dependencies=[Depends(require_token)])
