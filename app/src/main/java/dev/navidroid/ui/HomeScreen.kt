@@ -374,11 +374,11 @@ private fun StartHeader(app: NaviApp, onShuffle: () -> Unit, onCheckUpdates: () 
 
 // ---- Bibliothek ----
 
-private enum class LibrarySection(val label: String) { Artists("Künstler"), Playlists("Playlists") }
+private enum class LibrarySection(val label: String) { Playlists("Playlists"), Artists("Künstler") }
 
 @Composable
 private fun LibraryTab(app: NaviApp, nav: NavController) {
-    var section by rememberSaveable { mutableStateOf(LibrarySection.Artists) }
+    var section by rememberSaveable { mutableStateOf(LibrarySection.Playlists) }
     Column(Modifier.fillMaxSize()) {
         ScreenTitle("Bibliothek")
         SegmentedControl(

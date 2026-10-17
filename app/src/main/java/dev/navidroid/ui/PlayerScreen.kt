@@ -25,6 +25,12 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -369,36 +375,47 @@ private fun BottomPill(icon: ImageVector, label: String, onClick: () -> Unit, mo
 private fun QueueSheet(s: PlayerUiState, onDismiss: () -> Unit) {
     val player = LocalPlayer.current
     val accent = MaterialTheme.colorScheme.primary
+    val rowHeight = 64.dp
+    val rowPx = with(androidx.compose.ui.platform.LocalDensity.current) { rowHeight.toPx() }
+    // Lokale Reihenfolge (ursprüngliche Positionen), damit das Ziehen flüssig ist; Übergabe erst beim Loslassen.
+    val order = remember(s.queue) { androidx.compose.runtime.mutableStateListOf(*s.queue.indices.toList().toTypedArray()) }
+    var dragging by remember { mutableStateOf<Int?>(null) }
+    var dragOffset by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = Navi.Surface) {
-        Text(
-            "Warteschlange",
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-        )
-        Text(
-            "${s.queue.size} Titel",
-            style = MaterialTheme.typography.bodySmall,
-            color = Navi.Muted,
-            modifier = Modifier.padding(horizontal = 20.dp),
-        )
+        Row(Modifier.padding(start = 20.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Warteschlange", style = MaterialTheme.typography.titleLarge)
+                Text("${s.queue.size} Titel · Griff rechts zum Verschieben", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+            }
+            if (s.currentIndex < s.queue.lastIndex) {
+                TextButton(onClick = { player.clearUpcoming() }) { Text("Nächste leeren") }
+            }
+        }
         val listState = rememberLazyListState(initialFirstVisibleItemIndex = s.currentIndex.coerceAtLeast(0))
         LazyColumn(state = listState, modifier = Modifier.padding(top = 8.dp)) {
-            itemsIndexed(s.queue) { i, entry ->
-                val current = i == s.currentIndex
+            itemsIndexed(order, key = { _, original -> original }) { pos, original ->
+                val entry = s.queue.getOrNull(original) ?: return@itemsIndexed
+                val current = original == s.currentIndex
+                val isDragged = dragging == original
                 Row(
                     Modifier
+                        .zIndex(if (isDragged) 1f else 0f)
+                        .graphicsLayer { translationY = if (isDragged) dragOffset else 0f }
                         .fillMaxWidth()
+                        .height(rowHeight)
                         .padding(horizontal = 8.dp)
+                        .then(if (isDragged) Modifier.shadow(12.dp, RoundedCornerShape(12.dp)) else Modifier)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(if (current) Navi.Surface2 else Color.Transparent)
-                        .clickable { player.skipTo(i) }
-                        .padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+                        .background(if (current || isDragged) Navi.Surface2 else Navi.Surface)
+                        .clickable { player.skipTo(original) }
+                        .padding(start = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     Box(Modifier.width(24.dp), contentAlignment = Alignment.Center) {
                         if (current) Icon(Icons.Rounded.GraphicEq, "Läuft gerade", tint = accent, modifier = Modifier.size(18.dp))
-                        else Text("${i + 1}", color = Navi.Faint, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+                        else Text("${pos + 1}", color = Navi.Faint, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
                     }
                     Column(Modifier.weight(1f)) {
                         Text(
@@ -411,9 +428,36 @@ private fun QueueSheet(s: PlayerUiState, onDismiss: () -> Unit) {
                         Text(entry.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     if (!current) {
-                        IconButton(onClick = { player.removeAt(i) }) { Icon(Icons.Rounded.Close, "Entfernen", tint = Navi.Muted) }
-                    } else {
-                        Spacer(Modifier.size(48.dp))
+                        IconButton(onClick = { player.removeAt(original) }) { Icon(Icons.Rounded.Close, "Entfernen", tint = Navi.Muted) }
+                    }
+                    Box(
+                        Modifier
+                            .size(48.dp)
+                            .pointerInput(original) {
+                                detectDragGestures(
+                                    onDragStart = { dragging = original; dragOffset = 0f },
+                                    onDragCancel = { dragging = null; dragOffset = 0f },
+                                    onDragEnd = {
+                                        val to = order.indexOf(original)
+                                        dragging = null
+                                        dragOffset = 0f
+                                        player.move(original, to)
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        dragOffset += amount.y
+                                        val i = order.indexOf(original)
+                                        if (dragOffset > rowPx / 2 && i < order.lastIndex) {
+                                            order.add(i + 1, order.removeAt(i)); dragOffset -= rowPx
+                                        } else if (dragOffset < -rowPx / 2 && i > 0) {
+                                            order.add(i - 1, order.removeAt(i)); dragOffset += rowPx
+                                        }
+                                    },
+                                )
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.DragHandle, "Verschieben", tint = if (isDragged) accent else Navi.Faint)
                     }
                 }
             }

@@ -160,6 +160,17 @@ class PlayerConnection(context: Context, private val client: SubsonicClient) {
         controller?.removeMediaItem(index)
     }
 
+    fun move(from: Int, to: Int) {
+        if (from != to) controller?.moveMediaItem(from, to)
+    }
+
+    /** Entfernt alle Titel nach dem aktuellen. */
+    fun clearUpcoming() {
+        val c = controller ?: return
+        val start = c.currentMediaItemIndex + 1
+        if (start < c.mediaItemCount) c.removeMediaItems(start, c.mediaItemCount)
+    }
+
     fun toggleShuffle() {
         controller?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled }
     }
