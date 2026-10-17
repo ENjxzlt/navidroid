@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # yt-dlp braucht für YouTube eine JavaScript-Laufzeit (sonst HTTP 403 bei vielen Downloads).
@@ -12,7 +12,7 @@ COPY requirements.txt .
 # yt-dlp bewusst ohne feste Version: YouTube ändert sich oft, neue Builds holen den aktuellen Stand.
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py matching.py ./
+COPY app.py matching.py ai.py ./
 
 RUN useradd --uid 1000 --create-home helper
 USER helper

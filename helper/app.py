@@ -34,9 +34,10 @@ from pydantic import BaseModel
 from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
+import ai
 from matching import is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -453,6 +454,8 @@ def worker() -> None:
 
 _load_jobs()
 threading.Thread(target=worker, daemon=True).start()
+if ai.configured():
+    ai.ensure_key(DATA_DIR)
 
 
 # ---- API ----
@@ -481,7 +484,8 @@ def health() -> dict:
         lidarr_error = None
     except HTTPException as e:
         lidarr_version, lidarr_error = None, e.detail
-    return {"version": VERSION, "ytDlp": YTDLP_VERSION, "lidarr": lidarr_version, "lidarrError": lidarr_error}
+    return {"version": VERSION, "ytDlp": YTDLP_VERSION, "lidarr": lidarr_version, "lidarrError": lidarr_error,
+            "ai": ai.configured()}
 
 
 @app.post("/api/preview", dependencies=[Depends(require_token)])
@@ -649,6 +653,41 @@ def delete_job(job_id: str) -> dict:
     shutil.rmtree(STAGING / job_id, ignore_errors=True)
     _save_jobs()
     return {"ok": True}
+
+
+class NavidromeAuth(BaseModel):
+    url: str
+    user: str
+    token: str
+    salt: str
+
+
+class AiPlaylistRequest(BaseModel):
+    navidrome: NavidromeAuth
+    prompt: str
+    count: int = 40
+    preferRare: bool = False
+    suggestMissing: bool = False
+    previous: list[str] | None = None
+    refine: str | None = None
+
+
+@app.get("/api/ai/status", dependencies=[Depends(require_token)])
+def ai_status() -> dict:
+    return {"configured": ai.configured(), "publicKey": ai.ensure_key(DATA_DIR) if ai.configured() else None}
+
+
+@app.post("/api/ai/playlist", dependencies=[Depends(require_token)])
+def ai_playlist(req: AiPlaylistRequest) -> dict:
+    if not ai.configured():
+        raise HTTPException(400, "Für KI-Playlists ist im Helfer kein Claude-Worker eingerichtet (CLAUDE_WORKER)")
+    if not req.prompt.strip():
+        raise HTTPException(400, "Beschreibe kurz, was du hören möchtest")
+    try:
+        return ai.create_playlist(DATA_DIR, req.navidrome.model_dump(), req.prompt, req.count, req.preferRare,
+                                  req.suggestMissing, req.previous, req.refine)
+    except ai.AiError as e:
+        raise HTTPException(502, str(e)) from e
 
 
 @app.get("/api/videos/find", dependencies=[Depends(require_token)])
