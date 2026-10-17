@@ -250,7 +250,8 @@ class LidarrClient(http: OkHttpClient, private val store: LidarrStore) {
      * Fordert ein einzelnes Album an. Ist der Künstler noch unbekannt, legt Lidarr ihn
      * ohne weitere überwachte Alben an.
      */
-    suspend fun requestAlbum(album: LidarrAlbum) {
+    /** Gibt die Lidarr-ID des Albums zurück (nötig für den YouTube-Import). */
+    suspend fun requestAlbum(album: LidarrAlbum): Int {
         if (album.inLibrary) {
             send("PUT", "api/v1/album/monitor", body = buildJsonObject {
                 put("albumIds", buildJsonArray { add(JsonPrimitive(album.id)) })
@@ -260,7 +261,7 @@ class LidarrClient(http: OkHttpClient, private val store: LidarrStore) {
                 put("name", "AlbumSearch")
                 put("albumIds", buildJsonArray { add(JsonPrimitive(album.id)) })
             })
-            return
+            return album.id
         }
         val c = config()
         val artistRaw = album.raw["artist"] as? JsonObject ?: throw LidarrException("Album ohne Künstlerangabe")
@@ -284,7 +285,8 @@ class LidarrClient(http: OkHttpClient, private val store: LidarrStore) {
             put("monitored", true)
             putJsonObject("addOptions") { put("searchForNewAlbum", true) }
         }
-        send("POST", "api/v1/album", body = body)
+        val created = send("POST", "api/v1/album", body = body) as? JsonObject
+        return created?.int("id") ?: throw LidarrException("Lidarr hat keine Album-ID zurückgegeben")
     }
 
     // ---- Downloads ----

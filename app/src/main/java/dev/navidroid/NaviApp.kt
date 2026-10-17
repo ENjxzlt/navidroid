@@ -6,6 +6,8 @@ import coil.ImageLoaderFactory
 import dev.navidroid.data.LyricsRepository
 import dev.navidroid.data.SessionStore
 import dev.navidroid.data.SubsonicClient
+import dev.navidroid.lidarr.HelperClient
+import dev.navidroid.lidarr.HelperStore
 import dev.navidroid.lidarr.LidarrClient
 import dev.navidroid.lidarr.LidarrStore
 import okhttp3.OkHttpClient
@@ -22,6 +24,10 @@ class NaviApp : Application(), ImageLoaderFactory {
         private set
     lateinit var lidarr: LidarrClient
         private set
+    lateinit var helperStore: HelperStore
+        private set
+    lateinit var helper: HelperClient
+        private set
 
     val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -37,6 +43,8 @@ class NaviApp : Application(), ImageLoaderFactory {
         lyrics = LyricsRepository(this, http, client)
         lidarrStore = LidarrStore(this)
         lidarr = LidarrClient(http, lidarrStore)
+        helperStore = HelperStore(this)
+        helper = HelperClient(http, helperStore)
     }
 
     override fun newImageLoader(): ImageLoader =

@@ -1,0 +1,23 @@
+# Beispiel: NaviDroid-Helfer neben einem bestehenden Lidarr.
+# Wichtig: Der Staging-Ordner muss für Helfer UND Lidarr erreichbar sein.
+services:
+  navidroid-helper:
+    image: ghcr.io/enjxzlt/navidroid-helper:latest
+    # oder selbst bauen:
+    # build: https://github.com/ENjxzlt/navidroid.git#main:helper
+    container_name: navidroid-helper
+    restart: unless-stopped
+    user: "1000:1000"          # gleiche UID/GID wie Lidarr, damit Lidarr die Dateien verschieben darf
+    ports:
+      - "8787:8787"
+    environment:
+      HELPER_TOKEN: "ein-langes-zufaelliges-token"   # z. B. `openssl rand -hex 24`
+      LIDARR_URL: "http://lidarr:8686"
+      LIDARR_API_KEY: "dein-lidarr-api-key"
+      # Pfad des Staging-Ordners aus Sicht von Lidarr (nur nötig, wenn er dort anders gemountet ist)
+      LIDARR_STAGING_DIR: "/downloads/navidroid"
+      AUDIO_QUALITY: "320"
+    volumes:
+      - /pfad/zu/downloads/navidroid:/downloads/navidroid   # auch in Lidarr unter LIDARR_STAGING_DIR einbinden
+      - /pfad/zu/musikvideos:/videos
+      - ./navidroid-helper-data:/data

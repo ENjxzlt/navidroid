@@ -27,6 +27,27 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.SmartDisplay
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Switch
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Surface
 import androidx.compose.foundation.background
@@ -89,7 +110,10 @@ import android.widget.Toast
 
 enum class RequestMode(val label: String) { Albums("Alben"), Artists("Künstler"), Downloads("Downloads") }
 
-class RequestsVm(private val lidarr: LidarrClient) : ViewModel() {
+/** Offenes YouTube-Import-Blatt; ohne Album wählt man das Album nach dem Einfügen des Links. */
+data class ImportTarget(val album: LidarrAlbum?)
+
+class RequestsVm(private val lidarr: LidarrClient, private val helper: HelperClient) : ViewModel() {
     var mode by mutableStateOf(RequestMode.Albums)
         private set
     var query by mutableStateOf("")
@@ -100,6 +124,15 @@ class RequestsVm(private val lidarr: LidarrClient) : ViewModel() {
         private set
     var queue by mutableStateOf<Load<List<QueueItem>>?>(null)
         private set
+    var helperJobs by mutableStateOf<List<HelperJob>>(emptyList())
+        private set
+    var importTarget by mutableStateOf<ImportTarget?>(null)
+        private set
+    var startingImport by mutableStateOf(false)
+        private set
+
+    val activeDownloads: Int
+        get() = ((queue as? Load.Ok)?.value?.size ?: 0) + helperJobs.count { it.active }
 
     /** Laufende bzw. erledigte Anfragen, nach MusicBrainz-ID. */
     val busy = mutableStateMapOf<String, Boolean>()
@@ -148,7 +181,37 @@ class RequestsVm(private val lidarr: LidarrClient) : ViewModel() {
     fun loadQueue() {
         viewModelScope.launch {
             if (queue !is Load.Ok) queue = Load.Loading
+            if (helper.configured) runCatching { helper.jobs() }.onSuccess { helperJobs = it }
             queue = load { lidarr.queue() }
+        }
+    }
+
+    fun openImport(album: LidarrAlbum?) {
+        importTarget = ImportTarget(album)
+    }
+
+    fun closeImport() {
+        importTarget = null
+    }
+
+    fun startImport(link: String, albumId: Int, videos: Boolean, mapping: List<MappingRow>) {
+        if (startingImport) return
+        startingImport = true
+        viewModelScope.launch {
+            try {
+                val job = helper.startJob(link, albumId, videos, mapping)
+                helperJobs = listOf(job) + helperJobs.filter { it.id != job.id }
+                importTarget = null
+                mode = RequestMode.Downloads
+                messages.tryEmit("Import von „${job.title}“ gestartet")
+                loadQueue()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                messages.tryEmit(e.message ?: "Import konnte nicht gestartet werden")
+            } finally {
+                startingImport = false
+            }
         }
     }
 
@@ -230,7 +293,8 @@ fun RequestsTab(app: NaviApp) {
 
 @Composable
 private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
-    val vm: RequestsVm = viewModel { RequestsVm(app.lidarr) }
+    val vm: RequestsVm = viewModel { RequestsVm(app.lidarr, app.helper) }
+    val helperReady = app.helper.configured
     val context = LocalContext.current
     var confirmArtist by remember { mutableStateOf<LidarrArtist?>(null) }
 
@@ -254,7 +318,7 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
             options = RequestMode.entries.map { it to it.label },
             selected = vm.mode,
             onSelect = vm::selectMode,
-            badge = { m -> if (m == RequestMode.Downloads) ((vm.queue as? Load.Ok)?.value?.size ?: 0) else 0 },
+            badge = { m -> if (m == RequestMode.Downloads) vm.activeDownloads else 0 },
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
         )
 
@@ -268,9 +332,21 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             )
             if (vm.mode == RequestMode.Albums) {
-                SearchResults(vm.albums, onRetry = { vm.search() }) { list ->
-                    LazyColumn(Modifier.fillMaxSize()) {
-                        items(list, key = { it.foreignId.ifEmpty { it.title } }) { album -> AlbumResult(vm, album) }
+                SearchResults(
+                    vm.albums,
+                    onRetry = { vm.search() },
+                    empty = {
+                        Column(Modifier.fillMaxSize()) {
+                            EmptyHint("Keine Treffer")
+                        }
+                    },
+                    emptyFooter = if (helperReady) ({ PasteLinkButton { vm.openImport(null) } }) else null,
+                ) { list ->
+                    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                        items(list, key = { it.foreignId.ifEmpty { it.title } }) { album ->
+                            AlbumResult(vm, album, helperReady)
+                        }
+                        if (helperReady) item { PasteLinkButton { vm.openImport(null) } }
                     }
                 }
             } else {
@@ -284,6 +360,8 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
             }
         }
     }
+
+    vm.importTarget?.let { target -> YouTubeImportSheet(app, vm, target) }
 
     confirmArtist?.let { artist ->
         AlertDialog(
@@ -299,12 +377,43 @@ private fun RequestsContent(app: NaviApp, onOpenSettings: () -> Unit) {
 }
 
 @Composable
-private fun <T> SearchResults(state: Load<List<T>>?, onRetry: () -> Unit, content: @Composable (List<T>) -> Unit) {
+private fun <T> SearchResults(
+    state: Load<List<T>>?,
+    onRetry: () -> Unit,
+    empty: @Composable () -> Unit = { EmptyHint("Keine Treffer") },
+    emptyFooter: (@Composable () -> Unit)? = null,
+    content: @Composable (List<T>) -> Unit,
+) {
     when (state) {
-        null -> EmptyHint("Suche bei MusicBrainz über Lidarr")
+        null -> Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f)) { EmptyHint("Suche bei MusicBrainz über Lidarr") }
+            emptyFooter?.invoke()
+        }
         Load.Loading -> CenteredProgress()
         is Load.Err -> ErrorView(state.message, onRetry)
-        is Load.Ok -> if (state.value.isEmpty()) EmptyHint("Keine Treffer") else content(state.value)
+        is Load.Ok -> if (state.value.isEmpty()) {
+            Column(Modifier.fillMaxSize()) {
+                Box(Modifier.weight(1f)) { empty() }
+                emptyFooter?.invoke()
+            }
+        } else content(state.value)
+    }
+}
+
+@Composable
+private fun PasteLinkButton(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, Navi.Outline),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp).height(48.dp),
+    ) {
+        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Link, null, tint = Color(0xFFC9CDD4), modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("Nicht dabei? YouTube-Link einfügen", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = Color(0xFFC9CDD4))
+        }
     }
 }
 
@@ -317,7 +426,8 @@ private fun RemoteCover(url: String?, modifier: Modifier) {
 }
 
 @Composable
-private fun AlbumResult(vm: RequestsVm, album: LidarrAlbum) {
+private fun AlbumResult(vm: RequestsVm, album: LidarrAlbum, helperReady: Boolean) {
+    Column {
     ListItem(
         leadingContent = {
             RemoteCover(
@@ -347,6 +457,56 @@ private fun AlbumResult(vm: RequestsVm, album: LidarrAlbum) {
             )
         },
     )
+    if (helperReady && album.inLibrary && !album.complete) {
+        MissingSourceCard(
+            onYouTube = { vm.openImport(album) },
+            onRetry = { vm.requestAlbum(album) },
+        )
+    }
+    }
+}
+
+/** Hinweis bei Alben, die in Lidarr stehen, aber noch fehlen – mit dem Weg über YouTube. */
+@Composable
+private fun MissingSourceCard(onYouTube: () -> Unit, onRetry: () -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    Column(
+        Modifier
+            .padding(horizontal = 20.dp, vertical = 4.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(Navi.Surface)
+            .border(1.dp, Navi.Outline, RoundedCornerShape(18.dp))
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(Modifier.size(36.dp).clip(CircleShape).background(Navi.Outline), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.ErrorOutline, null, tint = accent, modifier = Modifier.size(20.dp))
+            }
+            Column {
+                Text("Noch nicht heruntergeladen", style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.ExtraBold))
+                Text("Findet Lidarr keine Quelle?", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+            }
+        }
+        Text(
+            "Du kannst das Album aus einer YouTube-Playlist holen. Es wird als MP3 in deinen Lidarr-Ordner gelegt und automatisch erkannt.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color(0xFFC9CDD4),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Surface(onClick = onYouTube, shape = RoundedCornerShape(26.dp), color = accent, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Rounded.SmartDisplay, null, tint = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Von YouTube holen", style = MaterialTheme.typography.labelLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize, fontWeight = FontWeight.ExtraBold), color = MaterialTheme.colorScheme.onPrimary)
+                }
+            }
+            TextButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) {
+                Text("Bei Lidarr erneut suchen", color = Color(0xFFC9CDD4))
+            }
+        }
+    }
 }
 
 @Composable
@@ -412,10 +572,11 @@ private fun RequestAction(
 
 @Composable
 private fun QueueList(vm: RequestsVm) {
+    val jobs = vm.helperJobs
     when (val q = vm.queue) {
-        null, Load.Loading -> CenteredProgress()
-        is Load.Err -> ErrorView(q.message, vm::loadQueue)
-        is Load.Ok -> if (q.value.isEmpty()) {
+        null, Load.Loading -> if (jobs.isEmpty()) CenteredProgress() else DownloadList(vm, jobs, emptyList())
+        is Load.Err -> if (jobs.isEmpty()) ErrorView(q.message, vm::loadQueue) else DownloadList(vm, jobs, emptyList())
+        is Load.Ok -> if (q.value.isEmpty() && jobs.isEmpty()) {
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Keine aktiven Downloads", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = vm::loadQueue) {
@@ -425,38 +586,398 @@ private fun QueueList(vm: RequestsVm) {
                 }
             }
         } else {
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+            DownloadList(vm, jobs, q.value)
+        }
+    }
+}
+
+@Composable
+private fun DownloadList(vm: RequestsVm, jobs: List<HelperJob>, queue: List<QueueItem>) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        items(jobs.filter { it.status != "done" }, key = { "job_${it.id}" }) { HelperJobCard(it) }
+        items(queue) { item ->
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Navi.Surface).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(q.value) { item ->
-                    Column(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Navi.Surface).padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(item.status.uppercase(), style = MaterialTheme.typography.labelSmall, color = Navi.Muted, modifier = Modifier.weight(1f))
-                            item.timeLeft?.let { Text("noch $it", style = MaterialTheme.typography.bodySmall, color = Navi.Muted) }
-                        }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("LIDARR · ${item.status.uppercase()}", style = MaterialTheme.typography.labelSmall, color = Navi.Muted, modifier = Modifier.weight(1f))
+                    item.timeLeft?.let { Text("noch $it", style = MaterialTheme.typography.bodySmall, color = Navi.Muted) }
+                }
+                Text(
+                    listOfNotNull(item.title, item.artist).joinToString(" · "),
+                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                item.progress?.let { p -> ProgressLine(p) }
+                item.error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                }
+            }
+        }
+        items(jobs.filter { it.status == "done" }.take(5), key = { "done_${it.id}" }) { job ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).border(1.dp, Navi.Surface2, RoundedCornerShape(18.dp)).padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(Modifier.size(28.dp).clip(CircleShape).background(Navi.Surface2), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(job.title, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Importiert · ${job.artist}", style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProgressLine(fraction: Float) {
+    Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Navi.Outline)) {
+        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(6.dp).background(MaterialTheme.colorScheme.primary))
+    }
+}
+
+@Composable
+private fun HelperJobCard(job: HelperJob) {
+    val accent = MaterialTheme.colorScheme.primary
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Navi.Surface).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text(job.title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val count = job.steps.firstOrNull()?.total ?: 0
+                Text("${job.artist} · $count Titel", style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Row(
+                Modifier.height(26.dp).clip(RoundedCornerShape(13.dp)).background(Navi.Outline).padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.SmartDisplay, null, tint = Color(0xFFC9CDD4), modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("YOUTUBE", style = MaterialTheme.typography.labelSmall.copy(letterSpacing = MaterialTheme.typography.labelSmall.letterSpacing / 2), color = Color(0xFFC9CDD4))
+            }
+        }
+        if (job.status == "queued") {
+            Text("Wartet auf den Start …", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+        }
+        job.steps.forEach { step ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                val dotModifier = Modifier.size(24.dp).clip(CircleShape)
+                when (step.state) {
+                    "done" -> Box(dotModifier.background(accent), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Check, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(14.dp))
+                    }
+                    "failed" -> Box(dotModifier.background(MaterialTheme.colorScheme.error), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.Close, null, tint = Navi.Bg, modifier = Modifier.size(14.dp))
+                    }
+                    "active" -> Box(dotModifier.border(2.dp, accent, CircleShape))
+                    else -> Box(dotModifier.border(2.dp, Color(0xFF3A3F48), CircleShape))
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row {
                         Text(
-                            listOfNotNull(item.title, item.artist).joinToString(" · "),
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
+                            step.label,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            color = if (step.state == "todo") Navi.Faint else Navi.Text,
+                            modifier = Modifier.weight(1f),
                         )
-                        item.progress?.let { p ->
-                            Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(Navi.Outline)) {
-                                Box(Modifier.fillMaxWidth(p).height(6.dp).background(MaterialTheme.colorScheme.primary))
+                        if (step.total > 1 && step.state != "todo") {
+                            Text("${step.done}/${step.total}", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+                        }
+                    }
+                    if (step.state == "active" && step.total > 1) ProgressLine(step.done.toFloat() / step.total)
+                }
+            }
+        }
+        job.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+    }
+}
+
+// ---- YouTube-Import ----
+
+private val bracketNoise = Regex("""[\(\[][^\)\]]*[\)\]]""")
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun YouTubeImportSheet(app: NaviApp, vm: RequestsVm, target: ImportTarget) {
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+    val accent = MaterialTheme.colorScheme.primary
+    var link by rememberSaveable { mutableStateOf("") }
+    var albumId by remember { mutableStateOf(target.album?.takeIf { it.inLibrary }?.id) }
+    var preview by remember { mutableStateOf<Load<HelperPreview>?>(null) }
+    var candidates by remember { mutableStateOf<Load<List<LidarrAlbum>>?>(null) }
+    var choosing by remember { mutableStateOf(false) }
+    var videos by remember { mutableStateOf(app.helper.videosEnabled) }
+
+    LaunchedEffect(link, albumId) {
+        val url = link.trim()
+        if (url.isEmpty()) {
+            preview = null
+            return@LaunchedEffect
+        }
+        delay(500)
+        preview = Load.Loading
+        preview = try {
+            Load.Ok(app.helper.preview(url, albumId))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Load.Err(e.message ?: "Link konnte nicht gelesen werden")
+        }
+    }
+    // Ohne Album: passende Alben anhand des Playlist-Titels vorschlagen.
+    val playlistTitle = (preview as? Load.Ok)?.value?.playlist?.title
+    LaunchedEffect(playlistTitle, albumId) {
+        if (albumId != null || playlistTitle.isNullOrBlank()) return@LaunchedEffect
+        candidates = Load.Loading
+        candidates = try {
+            Load.Ok(app.lidarr.searchAlbums(bracketNoise.replace(playlistTitle, " ").trim()).take(5))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Load.Err(e.message ?: "Lidarr-Suche fehlgeschlagen")
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = vm::closeImport,
+        containerColor = Navi.Surface,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        LazyColumn(
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                Column {
+                    Text("Von YouTube importieren", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold))
+                    target.album?.let {
+                        Text("Für „${it.title}“ · ${it.artistName}", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+                    }
+                }
+            }
+            item {
+                OutlinedTextField(
+                    value = link,
+                    onValueChange = { link = it },
+                    label = { Text("Playlist-Link") },
+                    placeholder = { Text("https://www.youtube.com/playlist?list=…") },
+                    leadingIcon = { Icon(Icons.Rounded.Link, null) },
+                    trailingIcon = {
+                        IconButton(onClick = { clipboard.getText()?.text?.let { link = it.trim() } }) {
+                            Icon(Icons.Rounded.ContentPaste, "Einfügen")
+                        }
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            when (val p = preview) {
+                null -> item {
+                    Text(
+                        "Füge den Link einer YouTube-Playlist (oder eines einzelnen Videos) ein.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Navi.Muted,
+                    )
+                }
+                Load.Loading -> item { CenteredProgress(Modifier.fillMaxWidth().padding(24.dp)) }
+                is Load.Err -> item { Text(p.message, color = MaterialTheme.colorScheme.error) }
+                is Load.Ok -> {
+                    val pv = p.value
+                    item { PlaylistCard(pv.playlist) }
+                    if (albumId == null) {
+                        item { Text("Zu welchem Album gehört das?", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold)) }
+                        when (val c = candidates) {
+                            null, Load.Loading -> item { CenteredProgress(Modifier.fillMaxWidth().padding(16.dp)) }
+                            is Load.Err -> item { Text(c.message, color = MaterialTheme.colorScheme.error) }
+                            is Load.Ok -> {
+                                if (c.value.isEmpty()) item {
+                                    Text("Kein passendes Album bei MusicBrainz gefunden. Suche es oben im Alben-Tab und starte den Import von dort.", color = Navi.Muted, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                items(c.value, key = { "cand_${it.foreignId}" }) { cand ->
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .clickable(enabled = !choosing) {
+                                                if (cand.inLibrary) {
+                                                    albumId = cand.id
+                                                } else {
+                                                    choosing = true
+                                                    scope.launch {
+                                                        try {
+                                                            albumId = app.lidarr.requestAlbum(cand)
+                                                        } catch (e: CancellationException) {
+                                                            throw e
+                                                        } catch (e: Exception) {
+                                                            vm.messages.tryEmit(e.message ?: "Album konnte nicht angelegt werden")
+                                                        } finally {
+                                                            choosing = false
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            .padding(vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    ) {
+                                        RemoteCover(cand.imageUrl, Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(cand.title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(listOfNotNull(cand.artistName, cand.year, cand.type).joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        }
+                                        if (choosing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        else Icon(Icons.AutoMirrored.Rounded.ArrowForward, null, tint = Navi.Muted)
+                                    }
+                                }
                             }
                         }
-                        item.error?.let {
-                            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                    } else if (pv.album != null) {
+                        val matched = pv.mapping.count { it.videoId != null }
+                        item {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Zuordnung zu ${pv.album.title}", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("$matched von ${pv.mapping.size} erkannt", style = MaterialTheme.typography.labelMedium, color = accent)
+                            }
+                            if (target.album == null) {
+                                TextButton(onClick = { albumId = null }, contentPadding = PaddingValues(0.dp)) { Text("Anderes Album wählen") }
+                            }
+                        }
+                        items(pv.mapping, key = { "map_${it.trackId}" }) { row ->
+                            MappingLine(
+                                ok = row.videoId != null,
+                                title = row.title,
+                                detail = if (row.videoId != null) "Video ${row.videoIndex} · „${row.videoTitle}“" else "Kein passendes Video – wird ausgelassen",
+                            )
+                        }
+                        items(pv.unmatchedVideos, key = { "skip_${it.id}" }) { v ->
+                            MappingLine(ok = false, title = "Wird übersprungen", detail = "Video ${v.index} · „${v.title}“ passt zu keinem Titel", muted = true)
+                        }
+                        item {
+                            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Navi.Surface2).padding(horizontal = 14.dp, vertical = 4.dp)) {
+                                SettingLine("Format") { Text("MP3 · 320 kbit/s", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)) }
+                                HorizontalDivider(color = Navi.Outline)
+                                SettingLine("Ziel") {
+                                    Text(
+                                        pv.targetFolder.orEmpty(),
+                                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                HorizontalDivider(color = Navi.Outline)
+                                Row(Modifier.fillMaxWidth().height(60.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Musikvideos mitladen", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = Color(0xFFC9CDD4))
+                                        Text("Im Video-Ordner des Helfers, abspielbar im Player", style = MaterialTheme.typography.bodySmall, color = Navi.Faint)
+                                    }
+                                    Switch(checked = videos, onCheckedChange = { videos = it })
+                                }
+                            }
+                        }
+                        item {
+                            Surface(
+                                onClick = { vm.startImport(link, pv.album.id, videos, pv.mapping) },
+                                enabled = matched > 0 && !vm.startingImport,
+                                shape = RoundedCornerShape(26.dp),
+                                color = if (matched > 0) accent else Navi.Outline,
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                            ) {
+                                Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                    if (vm.startingImport) {
+                                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                    } else {
+                                        Icon(Icons.Rounded.Download, null, tint = MaterialTheme.colorScheme.onPrimary)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            if (matched == 1) "1 Titel importieren" else "$matched Titel importieren",
+                                            style = MaterialTheme.typography.labelLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize, fontWeight = FontWeight.ExtraBold),
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                "Nur Inhalte importieren, die du nutzen darfst.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Navi.Faint,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            )
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PlaylistCard(playlist: PlaylistInfo) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Navi.Surface2).padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(width = 96.dp, height = 54.dp).clip(RoundedCornerShape(8.dp)).background(Navi.Outline)) {
+            playlist.thumbnail?.let { AsyncImage(it, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize()) }
+        }
+        Column(Modifier.weight(1f)) {
+            Text(playlist.title, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOfNotNull(
+                    playlist.uploader,
+                    if (playlist.count == 1) "1 Video" else "${playlist.count} Videos",
+                    if (playlist.durationSec > 0) "${playlist.durationSec / 60} Min." else null,
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = Navi.Muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MappingLine(ok: Boolean, title: String, detail: String, muted: Boolean = false) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Box(
+            Modifier.size(22.dp).clip(CircleShape).background(if (ok) MaterialTheme.colorScheme.primary else Navi.Outline),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (ok) Icons.Rounded.Check else Icons.Rounded.Remove,
+                null,
+                tint = if (ok) MaterialTheme.colorScheme.onPrimary else Navi.Muted,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = if (muted) Navi.Muted else Navi.Text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(detail, style = MaterialTheme.typography.labelSmall.copy(letterSpacing = MaterialTheme.typography.bodySmall.letterSpacing, fontWeight = FontWeight.Medium), color = Navi.Faint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun SettingLine(label: String, value: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = Color(0xFFC9CDD4))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { value() }
     }
 }
 
@@ -474,6 +995,12 @@ fun LidarrSettingsDialog(app: NaviApp, onDismiss: () -> Unit, onChanged: () -> U
     var root by remember { mutableStateOf(existing?.rootFolderPath) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val helperExisting = app.helperStore.config
+    var helperUrl by remember { mutableStateOf(helperExisting?.url.orEmpty()) }
+    var helperToken by remember { mutableStateOf(helperExisting?.token.orEmpty()) }
+    var helperVideos by remember { mutableStateOf(helperExisting?.videos ?: false) }
+    var helperStatus by remember { mutableStateOf<String?>(null) }
+    var helperChecking by remember { mutableStateOf(false) }
 
     fun connect() {
         busy = true
@@ -545,6 +1072,61 @@ fun LidarrSettingsDialog(app: NaviApp, onDismiss: () -> Unit, onChanged: () -> U
                     OptionPicker("Stammordner", o.rootFolders, root) { root = it }
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+                HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                Text("YouTube-Helfer (optional)", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                Text(
+                    "Docker-Dienst auf deinem Server, der fehlende Alben von YouTube holt. Einrichtung: siehe README im GitHub-Repo.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Navi.Muted,
+                )
+                OutlinedTextField(
+                    value = helperUrl,
+                    onValueChange = { helperUrl = it; helperStatus = null },
+                    label = { Text("Helfer-URL") },
+                    placeholder = { Text("http://192.168.1.10:8787") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = helperToken,
+                    onValueChange = { helperToken = it; helperStatus = null },
+                    label = { Text("Token") },
+                    supportingText = { Text("HELPER_TOKEN aus der docker-compose.yml") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Musikvideos im Player", modifier = Modifier.weight(1f))
+                    Switch(checked = helperVideos, onCheckedChange = { helperVideos = it })
+                }
+                OutlinedButton(
+                    onClick = {
+                        helperChecking = true
+                        scope.launch {
+                            helperStatus = try {
+                                val h = app.helper.health(helperUrl, helperToken)
+                                "Helfer ${h.version} · yt-dlp ${h.ytDlp} · " +
+                                    (h.lidarr?.let { "Lidarr $it verbunden" } ?: "Lidarr nicht erreichbar: ${h.lidarrError}")
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                "Fehler: ${e.message}"
+                            } finally {
+                                helperChecking = false
+                            }
+                        }
+                    },
+                    enabled = !helperChecking && helperUrl.isNotBlank() && helperToken.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (helperChecking) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text("Helfer prüfen")
+                }
+                helperStatus?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = if (it.startsWith("Fehler")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                }
             }
         },
         confirmButton = {
@@ -554,6 +1136,11 @@ fun LidarrSettingsDialog(app: NaviApp, onDismiss: () -> Unit, onChanged: () -> U
                     app.lidarrStore.save(
                         LidarrConfig(LidarrStore.normalizeUrl(url), apiKey.trim(), quality!!, metadata!!, root!!)
                     )
+                    if (helperUrl.isNotBlank() && helperToken.isNotBlank()) {
+                        app.helperStore.save(HelperConfig(LidarrStore.normalizeUrl(helperUrl), helperToken.trim(), helperVideos))
+                    } else {
+                        app.helperStore.clear()
+                    }
                     onChanged()
                     onDismiss()
                 },

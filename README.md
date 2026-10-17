@@ -16,9 +16,41 @@ Android-Client für [Navidrome](https://www.navidrome.org/) (Subsonic-API), gesc
 - Scrobbling an Navidrome („Spielt gerade“ + nach halber Laufzeit)
 - Musik anfordern über [Lidarr](https://lidarr.audio/): Alben oder ganze Künstler suchen und hinzufügen,
   Downloads verfolgen (Tab „Anfragen“; benötigt Lidarr-URL und API-Key)
+- Fehlende Alben aus YouTube-Playlists holen (über den optionalen YouTube-Helfer, siehe unten)
+- Optionale Musikvideos im Player (stumm und synchron zum Song)
 - In-App-Updates über GitHub Releases
 
 Schrift: [Manrope](https://github.com/googlefonts/manrope), SIL Open Font License (`licenses/Manrope-OFL.txt`).
+
+## YouTube-Helfer (optional)
+
+Findet Lidarr für ein Album keine Quelle, kann die App es aus einer YouTube-Playlist holen. Das erledigt
+ein kleiner Docker-Dienst auf deinem Server (`helper/`, Python mit yt-dlp und ffmpeg):
+
+1. Die App schickt den Playlist-Link an den Helfer. Er ordnet die Videos den Titeln des Lidarr-Albums zu.
+2. Der Helfer lädt die Audiospuren, wandelt sie in MP3 (320 kbit/s) und setzt Tags, Cover und
+   MusicBrainz-IDs.
+3. Lidarr importiert die Dateien per „Manual Import“, benennt sie nach deinem Schema und verschiebt sie
+   in den Stammordner. Das Album gilt danach als vorhanden, Navidrome findet es beim nächsten Scan.
+4. Optional lädt der Helfer die Musikvideos (MP4) in einen eigenen Ordner; die App spielt sie im Player.
+
+Einrichtung:
+
+1. `helper/docker-compose.example.yml` übernehmen und anpassen. Das Image wird automatisch als
+   `ghcr.io/enjxzlt/navidroid-helper:latest` gebaut und wöchentlich aktualisiert (neues yt-dlp).
+2. Den Staging-Ordner (z. B. `/pfad/zu/downloads/navidroid`) **auch in Lidarr** einbinden. Liegt er dort
+   unter einem anderen Pfad, diesen als `LIDARR_STAGING_DIR` setzen.
+3. Helfer und Lidarr mit derselben UID/GID laufen lassen, damit Lidarr die Dateien verschieben darf.
+4. In der App: Anfragen → Einstellungen → „YouTube-Helfer“ mit URL (Port 8787) und `HELPER_TOKEN`.
+
+Hinweis: YouTube-Downloads können gegen die Nutzungsbedingungen von YouTube verstoßen. Importiere nur
+Inhalte, die du nutzen darfst.
+
+Tests des Helfers (im gebauten Image):
+
+```bash
+docker build -t navidroid-helper helper && docker run --rm -v "$PWD/helper/tests:/app/tests:ro" --tmpfs /tmp:uid=1000 navidroid-helper python -m unittest discover -s tests
+```
 
 ## Bauen
 

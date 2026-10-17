@@ -56,6 +56,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import dev.navidroid.NaviApp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -182,6 +185,19 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
     val accent = MaterialTheme.colorScheme.primary
     var showQueue by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    val app = LocalContext.current.applicationContext as NaviApp
+
+    // Musikvideo vom YouTube-Helfer (optional, in den Lidarr-Einstellungen aktivierbar)
+    var videoUrl by remember { mutableStateOf<String?>(null) }
+    var showVideo by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(s.mediaId) {
+        videoUrl = null
+        val artist = s.artist
+        if (s.mediaId != null && artist != null && app.helper.videosEnabled) {
+            videoUrl = app.helper.findVideo(artist, s.title)
+        }
+        if (videoUrl == null) showVideo = false
+    }
 
     Column(
         Modifier.fillMaxSize().background(tint).systemBarsPadding().padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp),
@@ -189,12 +205,18 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             RoundIconButton(Icons.Rounded.KeyboardArrowDown, "Player schließen", onClose, container = Color.White.copy(alpha = 0.08f))
-            Column(
-                Modifier.weight(1f).clickable(enabled = s.albumId != null) { s.albumId?.let(onOpenAlbum) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text("AUS DEM ALBUM", style = MaterialTheme.typography.labelSmall, color = soft)
-                Text(s.album.orEmpty(), style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (videoUrl != null) {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    SongVideoToggle(showVideo, tint, soft) { showVideo = it }
+                }
+            } else {
+                Column(
+                    Modifier.weight(1f).clickable(enabled = s.albumId != null) { s.albumId?.let(onOpenAlbum) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text("AUS DEM ALBUM", style = MaterialTheme.typography.labelSmall, color = soft)
+                    Text(s.album.orEmpty(), style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
             Box {
                 RoundIconButton(Icons.Rounded.MoreHoriz, "Weitere Optionen", { menu = true }, container = Color.White.copy(alpha = 0.08f))
@@ -218,10 +240,15 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
         }
 
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            CoverImage(
-                s.artworkUri,
-                Modifier.aspectRatio(1f).shadow(24.dp, RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp)),
-            )
+            val url = videoUrl
+            if (showVideo && url != null) {
+                SyncedVideo(url, app.helper.authHeaders(), Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+            } else {
+                CoverImage(
+                    s.artworkUri,
+                    Modifier.aspectRatio(1f).shadow(24.dp, RoundedCornerShape(24.dp)).clip(RoundedCornerShape(24.dp)),
+                )
+            }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -280,6 +307,32 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
     }
 
     if (showQueue) QueueSheet(s, onDismiss = { showQueue = false })
+}
+
+@Composable
+private fun SongVideoToggle(video: Boolean, tint: Color, soft: Color, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.width(172.dp).clip(RoundedCornerShape(22.dp)).background(Color.White.copy(alpha = 0.08f)).padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        listOf(false to "Song", true to "Video").forEach { (value, label) ->
+            val active = value == video
+            Surface(
+                onClick = { onChange(value) },
+                shape = RoundedCornerShape(18.dp),
+                color = if (active) Color.White else Color.Transparent,
+                modifier = Modifier.weight(1f).height(36.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = if (active) FontWeight.ExtraBold else FontWeight.Bold),
+                        color = if (active) tint else soft,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
