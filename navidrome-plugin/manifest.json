@@ -1,0 +1,16 @@
+{
+  "name": "NaviDroid Extras",
+  "author": "NaviDroid",
+  "version": "1.0.0",
+  "description": "Synchronisierte Songtexte von LRCLIB und ähnliche Titel über Deezer-Radio – für alle Apps, nicht nur NaviDroid.",
+  "website": "https://github.com/ENjxzlt/navidroid",
+  "permissions": {
+    "http": {
+      "reason": "Songtexte von LRCLIB und ähnliche Titel von Deezer abrufen",
+      "requiredHosts": ["lrclib.net", "api.deezer.com"]
+    },
+    "cache": {
+      "reason": "Antworten zwischenspeichern, damit LRCLIB und Deezer nicht unnötig oft gefragt werden"
+    }
+  }
+}

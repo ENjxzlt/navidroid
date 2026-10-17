@@ -1,0 +1,3 @@
+.pdk/
+*.ndp
+plugin.wasm
