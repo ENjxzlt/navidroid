@@ -131,6 +131,10 @@ class LyricsRepository(context: Context, private val http: OkHttpClient, private
             synchronized(cache) { cache.clear() }
         }
 
+    fun clearCache() {
+        synchronized(cache) { cache.clear() }
+    }
+
     suspend fun load(song: SongRef): Lyrics? {
         synchronized(cache) { if (cache.containsKey(song.id)) return cache[song.id] }
         val fromServer = runCatching { client.lyrics(song.id) }.getOrDefault(emptyList())

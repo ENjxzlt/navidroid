@@ -1,0 +1,119 @@
+package dev.navidroid.data
+
+import java.time.LocalDate
+import kotlin.math.absoluteValue
+import kotlin.random.Random
+
+data class Mix(val id: String, val name: String, val description: String, val songs: List<Song>, val hue: Float)
+
+/**
+ * Tägliche Mixe wie bei Spotify, berechnet aus der eigenen Bibliothek:
+ * je Genre ein Mix (Lieblinge und selten Gehörtes gemischt), dazu „Lieblinge“ und „Entdecken“.
+ */
+class MixRepository(private val client: SubsonicClient?, private val artistGenres: suspend () -> Map<String, List<String>>) {
+    @Volatile
+    private var cached: Pair<LocalDate, List<Mix>>? = null
+
+    fun mix(id: String): Mix? = cached?.second?.firstOrNull { it.id == id }
+
+    suspend fun mixes(force: Boolean = false): List<Mix> {
+        val today = LocalDate.now()
+        cached?.let { (day, list) -> if (!force && day == today) return list }
+        val songs = client?.allSongs().orEmpty()
+        // Ohne Genre-Tags in den Dateien: Genres des Künstlers aus Lidarr verwenden
+        val genres = if (songs.any { !it.genre.isNullOrBlank() }) emptyMap() else artistGenres()
+        val result = build(songs, today, genres)
+        cached = today to result
+        return result
+    }
+
+    internal fun build(songs: List<Song>, day: LocalDate, artistGenres: Map<String, List<String>>): List<Mix> {
+        if (songs.isEmpty()) return emptyList()
+        val mixes = mutableListOf<Mix>()
+        val seed = day.toEpochDay()
+
+        fun pick(pool: List<Song>, key: String, size: Int = 30): List<Song> {
+            val rnd = Random(seed * 31 + key.hashCode())
+            val artists = pool.mapNotNull { it.artist }.toSet().size
+            // Kein Künstler mehr als ein Drittel des Mixes (bei wenigen Künstlern entsprechend mehr)
+            val cap = maxOf(3, size / 3, (size + artists - 1) / maxOf(1, artists))
+            val ordered = pool.sortedByDescending { it.playCount }.take(size).shuffled(rnd) + pool.shuffled(rnd)
+            val perArtist = HashMap<String?, Int>()
+            val chosen = LinkedHashSet<Song>()
+            for (s in ordered) {
+                if (chosen.size >= size) break
+                if (s in chosen) continue
+                val n = perArtist.getOrDefault(s.artist, 0)
+                if (n >= cap) continue
+                perArtist[s.artist] = n + 1
+                chosen += s
+            }
+            // Nicht zu viele Titel desselben Künstlers direkt hintereinander
+            return spread(chosen.toList().shuffled(rnd))
+        }
+
+        fun genresOf(s: Song): List<String> {
+            val own = (s.genre ?: "").split(';', '/', ',').map { it.trim() }.filter { it.isNotEmpty() }
+            if (own.isNotEmpty()) return own
+            val artist = (s.artist ?: "").lowercase()
+            return artistGenres[artist] ?: artistGenres.entries.firstOrNull { artist.startsWith(it.key) }?.value ?: emptyList()
+        }
+        val candidates = songs
+            .flatMap { s -> genresOf(s).map { it to s } }
+            .groupBy({ it.first.replaceFirstChar(Char::uppercase) }, { it.second })
+            .filterValues { it.size >= 8 }
+            .entries.sortedByDescending { it.value.size }
+        // Genres so wählen, dass jeder Mix andere Künstler in den Vordergrund stellt
+        val byGenre = mutableListOf<Map.Entry<String, List<Song>>>()
+        val coveredArtists = mutableSetOf<String>()
+        for (entry in candidates) {
+            val artists = entry.value.mapNotNull { it.artist?.lowercase() }.toSet()
+            val newShare = if (artists.isEmpty()) 0.0 else artists.count { it !in coveredArtists }.toDouble() / artists.size
+            if (byGenre.isEmpty() || newShare >= 0.4) {
+                byGenre += entry
+                coveredArtists += artists
+            }
+            if (byGenre.size == 5) break
+        }
+        byGenre.forEach { (genre, pool) ->
+            val picked = pick(pool, genre)
+            mixes += Mix("genre-$genre", "$genre Mix", artistsLine(picked), picked, hueOf(genre))
+        }
+        val played = songs.filter { it.playCount > 0 }
+        if (played.size >= 10) {
+            val top = played.sortedByDescending { it.playCount }.take(40).shuffled(Random(seed))
+            mixes += Mix("favorites", "Lieblinge", "Was du am häufigsten hörst", spread(top.take(30)), 0.95f)
+        }
+        val unplayed = songs.filter { it.playCount == 0L }
+        if (unplayed.size >= 10) {
+            val discover = unplayed.shuffled(Random(seed + 7)).take(30)
+            mixes += Mix("discover", "Entdecken", "Titel aus deiner Sammlung, die du noch nie gehört hast", spread(discover), 0.55f)
+        }
+        if (mixes.isEmpty()) {
+            val all = songs.shuffled(Random(seed)).take(30)
+            mixes += Mix("library", "Bibliothek Mix", artistsLine(all), all, 0.6f)
+        }
+        return mixes
+    }
+
+    private fun artistsLine(songs: List<Song>): String {
+        val artists = songs.mapNotNull { it.artist }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key }
+        return when {
+            artists.isEmpty() -> ""
+            artists.size <= 3 -> artists.joinToString(", ")
+            else -> artists.take(3).joinToString(", ") + " und mehr"
+        }
+    }
+
+    private fun spread(list: List<Song>): List<Song> {
+        val result = mutableListOf<Song>()
+        val pending = list.toMutableList()
+        while (pending.isNotEmpty()) {
+            val i = pending.indexOfFirst { it.artist != result.lastOrNull()?.artist }.takeIf { it >= 0 } ?: 0
+            result += pending.removeAt(i)
+        }
+        return result
+    }
+
+    private fun hueOf(key: String) = (key.hashCode().absoluteValue % 360) / 360f
+}

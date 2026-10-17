@@ -3,8 +3,10 @@ package dev.navidroid
 import android.app.Application
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import dev.navidroid.data.AppSettings
 import dev.navidroid.data.CoverFallback
 import dev.navidroid.data.LyricsRepository
+import dev.navidroid.data.MixRepository
 import dev.navidroid.data.SessionStore
 import dev.navidroid.data.SubsonicClient
 import dev.navidroid.lidarr.HelperClient
@@ -22,6 +24,10 @@ class NaviApp : Application(), ImageLoaderFactory {
     lateinit var lyrics: LyricsRepository
         private set
     lateinit var covers: CoverFallback
+        private set
+    lateinit var settings: AppSettings
+        private set
+    lateinit var mixes: MixRepository
         private set
     lateinit var lidarrStore: LidarrStore
         private set
@@ -42,9 +48,11 @@ class NaviApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         session = SessionStore(this)
+        settings = AppSettings(this)
         client = SubsonicClient(http, session)
         lyrics = LyricsRepository(this, http, client)
         covers = CoverFallback(client, http)
+        mixes = MixRepository(client) { helper.artistGenres() }
         lidarrStore = LidarrStore(this)
         lidarr = LidarrClient(http, lidarrStore)
         helperStore = HelperStore(this)

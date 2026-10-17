@@ -28,7 +28,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        val client = (application as NaviApp).client
+        val app = application as NaviApp
+        val client = app.client
         val player = ExoPlayer.Builder(this)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -48,7 +49,7 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         session = MediaSession.Builder(this, player)
-            .setCallback(Callback(client))
+            .setCallback(Callback(this, app))
             .setSessionActivity(openApp)
             .build()
         Scrobbler(player, client, scope)
@@ -58,14 +59,19 @@ class PlaybackService : MediaSessionService() {
      * MediaItems vom Controller kommen ohne URI an – die Stream-URL wird hier
      * aus der Song-ID (mediaId) aufgebaut.
      */
-    private class Callback(private val client: SubsonicClient) : MediaSession.Callback {
+    private class Callback(private val context: android.content.Context, private val app: NaviApp) : MediaSession.Callback {
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>,
-        ): ListenableFuture<MutableList<MediaItem>> = Futures.immediateFuture(
-            mediaItems.map { it.buildUpon().setUri(client.streamUrl(it.mediaId)).build() }.toMutableList()
-        )
+        ): ListenableFuture<MutableList<MediaItem>> {
+            // Mobilfunk (getaktet) bekommt die mobile Qualität, sonst die WLAN-Qualität.
+            val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
+            val bitrate = if (cm?.isActiveNetworkMetered == true) app.settings.mobileBitrate else app.settings.wifiBitrate
+            return Futures.immediateFuture(
+                mediaItems.map { it.buildUpon().setUri(app.client.streamUrl(it.mediaId, bitrate)).build() }.toMutableList()
+            )
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session

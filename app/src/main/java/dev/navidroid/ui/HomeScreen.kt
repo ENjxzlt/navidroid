@@ -91,8 +91,8 @@ import java.util.Locale
 
 enum class HomeTab(val label: String, val icon: ImageVector) {
     Start("Start", Icons.Rounded.Home),
-    Library("Bibliothek", Icons.Rounded.LibraryMusic),
     Search("Suche", Icons.Rounded.Search),
+    Library("Bibliothek", Icons.Rounded.LibraryMusic),
     Requests("Anfragen", Icons.Rounded.AddBox),
 }
 
@@ -107,7 +107,7 @@ fun HomeScreen(
 ) {
     Box(Modifier.fillMaxSize().background(Navi.Bg)) {
         when (tab) {
-            HomeTab.Start -> StartTab(app, nav, onOpenSearch = { onTabChange(HomeTab.Search) }, onCheckUpdates, onLogout)
+            HomeTab.Start -> HomeStartTab(app, nav, onOpenSettings = { nav.navigate(Routes.SETTINGS) })
             HomeTab.Library -> LibraryTab(app, nav)
             HomeTab.Search -> SearchTab(app, nav)
             HomeTab.Requests -> Column(Modifier.fillMaxSize()) { RequestsTab(app) }
@@ -197,22 +197,12 @@ private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_
     else -> "Guten Abend"
 }
 
+/** Alle Alben mit Filtern (Neu, Häufig, …) – in der Bibliothek. */
 @Composable
-private fun StartTab(
-    app: NaviApp,
-    nav: NavController,
-    onOpenSearch: () -> Unit,
-    onCheckUpdates: () -> Unit,
-    onLogout: () -> Unit,
-) {
+private fun AlbumsBrowser(app: NaviApp, nav: NavController) {
     val vm: AlbumsVm = viewModel { AlbumsVm(app.client) }
-    val player = LocalPlayer.current
     val grid = rememberLazyGridState()
     val scope = rememberCoroutineScope()
-    val snackbar = remember { SnackbarHostState() }
-    val recent = rememberLoad("recent") { app.client.albumList("recent", 12, 0) }
-    val headerItems = 5 // Kopf, Suche, Zuletzt gespielt, Chips, Abstand
-
     val nearEnd by remember {
         derivedStateOf {
             val last = grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
@@ -222,151 +212,28 @@ private fun StartTab(
     LaunchedEffect(nearEnd, vm.albums.size) {
         if (nearEnd && vm.albums.isNotEmpty()) vm.loadMore()
     }
-
-    Box(Modifier.fillMaxSize()) {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(150.dp),
-            state = grid,
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                StartHeader(
-                    app = app,
-                    onShuffle = {
-                        scope.launch {
-                            runCatching { app.client.randomSongs() }
-                                .onSuccess { player.play(it) }
-                                .onFailure { snackbar.showSnackbar(it.message ?: "Fehler beim Laden") }
-                        }
-                    },
-                    onCheckUpdates = onCheckUpdates,
-                    onLogout = onLogout,
-                )
-            }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Navi.Surface)
-                        .clickable(onClick = onOpenSearch)
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Rounded.Search, null, tint = Navi.Muted, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text("Künstler, Alben, Titel", color = Navi.Muted, style = MaterialTheme.typography.bodyLarge)
-                }
-            }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                val albums = (recent.state as? Load.Ok)?.value.orEmpty()
-                if (albums.isNotEmpty()) {
-                    Column(Modifier.bleed(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        SectionHeader("Zuletzt gespielt") {
-                            TextButton(onClick = {
-                                vm.select("recent")
-                                scope.launch { grid.animateScrollToItem(headerItems) }
-                            }) { Text("Alle") }
-                        }
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        ) {
-                            items(albums, key = { it.id }) { album ->
-                                AlbumCard(album, Modifier.width(148.dp)) { nav.openAlbum(album.id) }
-                            }
-                        }
-                    }
-                }
-            }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                ChipRow(
-                    options = albumTypes,
-                    selected = vm.type,
-                    onSelect = { vm.select(it); scope.launch { grid.scrollToItem(3) } },
-                    modifier = Modifier.bleed(20.dp).padding(top = 4.dp),
-                )
-            }
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                when {
-                    vm.albums.isEmpty() && vm.loading -> CenteredProgress(Modifier.fillMaxWidth().padding(32.dp))
-                    vm.albums.isEmpty() && vm.error != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(vm.error!!, color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = vm::loadMore) { Text("Erneut versuchen") }
-                    }
-                    vm.albums.isEmpty() -> Text("Keine Alben gefunden", color = Navi.Muted, modifier = Modifier.padding(vertical = 24.dp))
-                    else -> Spacer(Modifier.height(0.dp))
-                }
-            }
-            items(vm.albums, key = { it.id }) { album ->
-                AlbumCard(album) { nav.openAlbum(album.id) }
-            }
-            if (vm.loading && vm.albums.isNotEmpty()) {
-                item(span = { GridItemSpan(maxLineSpan) }) { CenteredProgress(Modifier.fillMaxWidth().padding(16.dp)) }
-            }
-            if (vm.error != null && vm.albums.isNotEmpty()) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    TextButton(onClick = vm::loadMore) { Text("Erneut versuchen") }
-                }
-            }
-        }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
-    }
-}
-
-@Composable
-private fun StartHeader(app: NaviApp, onShuffle: () -> Unit, onCheckUpdates: () -> Unit, onLogout: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
-    var onlineLyrics by remember { mutableStateOf(app.lyrics.onlineLyrics) }
-    val date = remember { SimpleDateFormat("EEEE, d. MMMM", Locale.GERMAN).format(Date()) }
-    val initial = app.session.current?.username?.firstOrNull()?.uppercase() ?: "?"
-
-    Row(
-        Modifier.fillMaxWidth().statusBarsPadding().padding(top = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(date, style = MaterialTheme.typography.bodySmall.copy(fontSize = MaterialTheme.typography.bodyMedium.fontSize), color = Navi.Muted)
-            Text(greeting(), style = MaterialTheme.typography.headlineMedium)
-        }
-        RoundIconButton(Icons.Rounded.Shuffle, "Zufallsmix abspielen", onShuffle)
-        Box {
-            Surface(onClick = { menu = true }, shape = CircleShape, color = Navi.Surface2, modifier = Modifier.size(44.dp)) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(initial, style = MaterialTheme.typography.titleMedium)
-                }
-            }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(
-                    text = { Text("Online-Songtexte (LRCLIB)") },
-                    leadingIcon = { Icon(Icons.Rounded.Lyrics, null) },
-                    trailingIcon = { if (onlineLyrics) Icon(Icons.Rounded.Check, "Aktiv") },
-                    onClick = {
-                        onlineLyrics = !onlineLyrics
-                        app.lyrics.onlineLyrics = onlineLyrics
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Nach Updates suchen") },
-                    leadingIcon = { Icon(Icons.Rounded.SystemUpdate, null) },
-                    onClick = { menu = false; onCheckUpdates() },
-                )
-                DropdownMenuItem(
-                    text = { Text("Abmelden") },
-                    leadingIcon = { Icon(Icons.AutoMirrored.Rounded.Logout, null) },
-                    onClick = { menu = false; onLogout() },
-                )
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = { Text("NaviDroid ${BuildConfig.VERSION_NAME}") },
-                    enabled = false,
-                    onClick = {},
-                )
+    Column(Modifier.fillMaxSize()) {
+        ChipRow(
+            options = albumTypes,
+            selected = vm.type,
+            onSelect = { vm.select(it); scope.launch { grid.scrollToItem(0) } },
+            modifier = Modifier.padding(vertical = 8.dp),
+        )
+        when {
+            vm.albums.isEmpty() && vm.loading -> CenteredProgress()
+            vm.albums.isEmpty() && vm.error != null -> ErrorView(vm.error!!, vm::loadMore)
+            vm.albums.isEmpty() -> EmptyHint("Keine Alben gefunden")
+            else -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(150.dp),
+                state = grid,
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                items(vm.albums, key = { it.id }) { album -> AlbumCard(album) { nav.openAlbum(album.id) } }
+                if (vm.loading) item(span = { GridItemSpan(maxLineSpan) }) { CenteredProgress(Modifier.fillMaxWidth().padding(16.dp)) }
+                if (vm.error != null) item(span = { GridItemSpan(maxLineSpan) }) { TextButton(onClick = vm::loadMore) { Text("Erneut versuchen") } }
             }
         }
     }
@@ -374,7 +241,7 @@ private fun StartHeader(app: NaviApp, onShuffle: () -> Unit, onCheckUpdates: () 
 
 // ---- Bibliothek ----
 
-private enum class LibrarySection(val label: String) { Playlists("Playlists"), Artists("Künstler") }
+private enum class LibrarySection(val label: String) { Playlists("Playlists"), Albums("Alben"), Artists("Künstler") }
 
 @Composable
 private fun LibraryTab(app: NaviApp, nav: NavController) {
@@ -389,6 +256,7 @@ private fun LibraryTab(app: NaviApp, nav: NavController) {
         )
         when (section) {
             LibrarySection.Artists -> ArtistsList(app, nav)
+            LibrarySection.Albums -> AlbumsBrowser(app, nav)
             LibrarySection.Playlists -> PlaylistsList(app, nav)
         }
     }

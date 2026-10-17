@@ -54,6 +54,9 @@ data class Album(
     val year: Int? = null,
     val starred: String? = null,
     val musicBrainzId: String? = null,
+    val genre: String? = null,
+    val playCount: Long = 0,
+    val played: String? = null,
     val song: List<Song> = emptyList(),
 )
 
@@ -71,6 +74,9 @@ data class Song(
     val coverArt: String? = null,
     val year: Int? = null,
     val starred: String? = null,
+    val genre: String? = null,
+    val playCount: Long = 0,
+    val played: String? = null,
 )
 
 @Serializable

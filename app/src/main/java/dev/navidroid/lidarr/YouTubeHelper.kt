@@ -56,7 +56,14 @@ class HelperStore(context: Context) {
 }
 
 @Serializable
-data class HelperHealth(val version: String = "", val ytDlp: String = "", val lidarr: String? = null, val lidarrError: String? = null)
+data class HelperHealth(
+    val version: String = "",
+    val ytDlp: String = "",
+    val lidarr: String? = null,
+    val lidarrError: String? = null,
+    val ai: Boolean = false,
+    val manual: Boolean = false,
+)
 
 @Serializable
 data class SearchHit(
@@ -166,6 +173,22 @@ data class ManualPreview(val playlist: PlaylistInfo = PlaylistInfo(), val tracks
 data class ManualTrack(val videoId: String, val title: String, val number: Int)
 
 @Serializable
+data class MaPlayer(
+    val id: String,
+    val name: String = "",
+    val provider: String? = null,
+    val type: String? = null,
+    val available: Boolean = true,
+    val state: String? = null,
+    val volume: Double? = null,
+    val title: String? = null,
+    val artist: String? = null,
+    val duration: Double? = null,
+    val elapsed: Double? = null,
+    val queueIndex: Int? = null,
+)
+
+@Serializable
 data class SkippedTrack(val title: String = "", val reason: String = "")
 
 @Serializable
@@ -178,7 +201,8 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
 
     // Claude braucht für eine Playlist gern eine Minute oder mehr.
     private val slowHttp = http.newBuilder().readTimeout(300, TimeUnit.SECONDS).build()
-    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
+    // coerceInputValues: null in Feldern mit Standardwert (z. B. Länge) nicht als Fehler behandeln
+    private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; coerceInputValues = true }
     private val videoCache = HashMap<String, String?>()
 
     val configured: Boolean get() = store.config != null
@@ -237,7 +261,7 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     private inline fun <reified T> decode(text: String): T = try {
         json.decodeFromString(text)
     } catch (e: SerializationException) {
-        throw HelperException("Unerwartete Antwort – ist das der NaviDroid-Helfer?")
+        throw HelperException("Unerwartete Antwort vom Helfer (${e.message?.take(120)})")
     }
 
     suspend fun health(url: String, token: String): HelperHealth =
@@ -277,6 +301,53 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     }
 
     suspend fun jobs(): List<HelperJob> = decode(send(config(), "GET", "api/jobs"))
+
+    // ---- Music Assistant (über den Helfer im Heimnetz) ----
+
+    private fun maAuth(url: String, token: String) = buildJsonObject {
+        put("url", url)
+        put("token", token)
+    }
+
+    suspend fun maPlayers(url: String, token: String): List<MaPlayer> =
+        decode(send(config(), "POST", "api/ma/players", maAuth(url, token).toString()))
+
+    suspend fun maPlay(url: String, token: String, playerId: String, navidrome: dev.navidroid.data.Credentials, songIds: List<String>) {
+        val body = buildJsonObject {
+            put("ma", maAuth(url, token))
+            put("playerId", playerId)
+            put("navidrome", buildJsonObject {
+                put("url", navidrome.serverUrl)
+                put("user", navidrome.username)
+                put("token", navidrome.token)
+                put("salt", navidrome.salt)
+            })
+            put("songIds", buildJsonArray { songIds.forEach { add(JsonPrimitive(it)) } })
+        }
+        send(config(), "POST", "api/ma/play", body.toString())
+    }
+
+    suspend fun maCommand(url: String, token: String, playerId: String, command: String, value: Double?) {
+        val body = buildJsonObject {
+            put("ma", maAuth(url, token))
+            put("playerId", playerId)
+            put("command", command)
+            if (value != null) put("value", value)
+        }
+        send(config(), "POST", "api/ma/command", body.toString())
+    }
+
+    suspend fun maState(url: String, token: String, playerId: String): MaPlayer {
+        val body = buildJsonObject {
+            put("ma", maAuth(url, token))
+            put("playerId", playerId)
+        }
+        return decode(send(config(), "POST", "api/ma/state", body.toString()))
+    }
+
+    /** Künstlername (klein) → Genres aus Lidarr; leer, wenn der Helfer fehlt. */
+    suspend fun artistGenres(): Map<String, List<String>> =
+        if (!configured) emptyMap() else runCatching { decode<Map<String, List<String>>>(send(config(), "GET", "api/artist-genres")) }.getOrDefault(emptyMap())
 
     suspend fun manualPreview(url: String, artist: String): ManualPreview {
         val body = buildJsonObject {

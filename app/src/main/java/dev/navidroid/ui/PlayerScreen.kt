@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -106,7 +107,14 @@ fun MiniPlayer(state: PlayerUiState, onOpen: () -> Unit, modifier: Modifier = Mo
                 CoverImage(state.artworkUri, Modifier.size(48.dp).clip(RoundedCornerShape(10.dp)), albumCoverAlternative(state.albumId))
                 Column(Modifier.weight(1f)) {
                     Text(state.title, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(state.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (state.remote != null) {
+                        Text(state.remote.name, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    } else {
+                        Text(state.artist.orEmpty(), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                IconButton(onClick = { DeviceBus.open = true }) {
+                    Icon(Icons.Rounded.Devices, "Geräte", tint = if (state.remote != null) MaterialTheme.colorScheme.primary else Navi.Muted)
                 }
                 Surface(onClick = player::togglePlayPause, shape = CircleShape, color = Navi.Text, modifier = Modifier.size(44.dp)) {
                     Box(contentAlignment = Alignment.Center) {
@@ -327,6 +335,25 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BottomPill(Icons.Rounded.Lyrics, "Songtext", onOpenLyrics, Modifier.weight(1f))
             BottomPill(Icons.AutoMirrored.Rounded.QueueMusic, "Warteschlange", { showQueue = true }, Modifier.weight(1f))
+            Surface(
+                onClick = { DeviceBus.open = true },
+                shape = RoundedCornerShape(16.dp),
+                color = if (s.remote != null) accent else Color.White.copy(alpha = 0.08f),
+                modifier = Modifier.size(56.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Rounded.Devices, "Geräte", tint = if (s.remote != null) MaterialTheme.colorScheme.onPrimary else Color.White)
+                }
+            }
+        }
+        if (s.remote != null) {
+            Text(
+                "Läuft auf ${s.remote!!.name}",
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                color = accent,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 

@@ -54,6 +54,7 @@ fun NaviRoot(app: NaviApp) {
     LaunchedEffect(Unit) { updates.checkOnStart() }
     UpdateDialog(updates)
     PlaylistBus.addRequest?.let { AddToPlaylistSheet(app, it) }
+    if (DeviceBus.open) DevicesSheet(app)
 
     val fullScreen = route == Routes.PLAYER || route == Routes.LYRICS || route == Routes.LOGIN || route == Routes.PLAYLIST_EDIT || route == Routes.AI_PLAYLIST
     val showMini = playerState.hasItem && route != null && !fullScreen
@@ -145,6 +146,19 @@ fun NaviRoot(app: NaviApp) {
                     onOpenLyrics = { nav.navigate(Routes.LYRICS) },
                     onOpenAlbum = { id -> nav.popBackStack(); nav.openAlbum(id) },
                     onOpenArtist = { id -> nav.popBackStack(); nav.openArtist(id) },
+                )
+            }
+            composable("mix/{id}") { e -> MixScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
+            composable(Routes.SETTINGS) {
+                SettingsScreen(
+                    app,
+                    nav,
+                    onCheckUpdates = { updates.checkManually() },
+                    onLogout = {
+                        player.stop()
+                        app.session.clear()
+                        nav.navigate(Routes.LOGIN) { popUpTo(Routes.HOME) { inclusive = true } }
+                    },
                 )
             }
             composable(Routes.AI_PLAYLIST) {

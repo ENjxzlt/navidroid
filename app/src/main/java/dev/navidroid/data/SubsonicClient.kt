@@ -132,6 +132,20 @@ class SubsonicClient(
         call("deletePlaylist", "id" to id)
     }
 
+    /** Alle Titel der Bibliothek (search3 mit leerer Suche, seitenweise). */
+    suspend fun allSongs(limit: Int = 20000): List<Song> {
+        val songs = mutableListOf<Song>()
+        var offset = 0
+        while (songs.size < limit) {
+            val page = call("search3", "query" to "", "artistCount" to "0", "albumCount" to "0", "songCount" to "500", "songOffset" to "$offset")
+                .searchResult3?.song.orEmpty()
+            songs += page
+            if (page.size < 500) break
+            offset += 500
+        }
+        return songs
+    }
+
     suspend fun randomSongs(size: Int = 50): List<Song> =
         call("getRandomSongs", "size" to "$size").randomSongs?.song.orEmpty()
 
@@ -147,7 +161,17 @@ class SubsonicClient(
     suspend fun lyrics(songId: String): List<StructuredLyrics> =
         call("getLyricsBySongId", "id" to songId).lyricsList?.structuredLyrics.orEmpty()
 
-    fun streamUrl(id: String): String = buildUrl(credentials(), "stream", listOf("id" to id)).toString()
+    /** Stream-URL; mit [maxBitRate] (kbit/s) rechnet Navidrome auf MP3 herunter, 0 = Originaldatei. */
+    fun streamUrl(id: String, maxBitRate: Int = 0): String {
+        val params = buildList {
+            add("id" to id)
+            if (maxBitRate > 0) {
+                add("maxBitRate" to "$maxBitRate")
+                add("format" to "mp3")
+            }
+        }
+        return buildUrl(credentials(), "stream", params).toString()
+    }
 
     fun coverArtUrl(id: String?, size: Int): String? {
         val c = session.current ?: return null

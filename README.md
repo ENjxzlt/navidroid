@@ -18,6 +18,10 @@ Android-Client für [Navidrome](https://www.navidrome.org/) (Subsonic-API), gesc
 - Scrobbling an Navidrome („Spielt gerade“ + nach halber Laufzeit)
 - Musik anfordern über [Lidarr](https://lidarr.audio/): Alben oder ganze Künstler suchen und hinzufügen,
   Downloads verfolgen (Tab „Anfragen“; benötigt Lidarr-URL und API-Key)
+- Startseite wie Spotify: Schnellzugriffe, tägliche Mixe nach Genre (Genres aus Datei-Tags oder Lidarr),
+  „Entdecken“, zuletzt gespielt, neu, lange nicht gehört
+- Auf anderen Geräten abspielen (Echo/Alexa, Google Cast, DLNA, AirPlay …) über Music Assistant
+- Einstellungen an einem Ort, Streaming-Qualität getrennt für WLAN und Mobilfunk
 - KI-Playlists: Wunsch in eigenen Worten, Claude stellt die Playlist aus deiner Bibliothek zusammen
   (über einen bestehenden Claude-Code-Worker per SSH, siehe unten)
 - Playlists anlegen, umbenennen, sortieren (Ziehen), Titel hinzufügen/entfernen, löschen – gespeichert in Navidrome

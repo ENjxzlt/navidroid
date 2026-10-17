@@ -98,6 +98,7 @@ object Routes {
     const val PLAYER = "player"
     const val LYRICS = "lyrics"
     const val AI_PLAYLIST = "ai-playlist"
+    const val SETTINGS = "settings"
 }
 
 fun NavController.openAlbum(id: String) = navigate("album/$id")
@@ -238,7 +239,9 @@ fun rememberCoverTint(model: Any?, fallback: Color = Navi.Surface, alternative: 
 /** Setzt die Akzentfarbe des Themes auf die Farbe des Covers (mit sanftem Übergang). */
 @Composable
 fun CoverAccentTheme(model: Any?, alternative: CoverAlternative? = null, content: @Composable () -> Unit) {
-    val accent by animateColorAsState(rememberCoverColors(model, alternative)?.accent ?: Navi.Accent, tween(600), label = "coverAccent")
+    val app = LocalContext.current.applicationContext as NaviApp
+    val coverAccent = if (app.settings.coverColors) rememberCoverColors(model, alternative)?.accent else null
+    val accent by animateColorAsState(coverAccent ?: Navi.Accent, tween(600), label = "coverAccent")
     val scheme = MaterialTheme.colorScheme.copy(
         primary = accent,
         secondary = accent,
