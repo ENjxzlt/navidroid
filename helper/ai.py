@@ -165,19 +165,8 @@ def build_prompt(lines: list[str], wish: str, count: int, prefer_rare: bool, sug
     )
 
 
-def create_playlist(data_dir: Path, nav: dict, wish: str, count: int, prefer_rare: bool, suggest_missing: bool,
-                    previous: list[str] | None = None, refine: str | None = None) -> dict:
-    songs = library(nav)
-    if not songs:
-        raise AiError("Die Bibliothek ist leer")
-    if len(songs) > MAX_TRACKS_IN_PROMPT:
-        # Sehr große Bibliotheken: oft gehörte und zufällige Titel mischen, damit der Prompt handlich bleibt.
-        songs.sort(key=lambda s: -(s.get("playCount") or 0))
-        songs = songs[: MAX_TRACKS_IN_PROMPT // 2] + songs[MAX_TRACKS_IN_PROMPT // 2:][:: max(1, len(songs) // MAX_TRACKS_IN_PROMPT)]
-    by_id = {s["id"]: s for s in songs}
-    prompt = build_prompt([_line(s) for s in songs], wish, max(5, min(count, 100)), prefer_rare, suggest_missing, previous, refine)
-    answer = _extract_json(_ask_claude(data_dir, prompt))
-
+def _tracks(answer: dict, by_id: dict[str, dict]) -> list[dict]:
+    """Nur Titel, die es wirklich gibt, ohne Doppelte und ohne leere Felder."""
     seen: set[str] = set()
     tracks = []
     for tid in answer.get("trackIds") or []:
@@ -188,6 +177,81 @@ def create_playlist(data_dir: Path, nav: dict, wish: str, count: int, prefer_rar
             track["title"] = track["title"] or ""
             track["duration"] = int(track["duration"] or 0)
             tracks.append({k: v for k, v in track.items() if v is not None})
+    return tracks
+
+
+def _sample(songs: list[dict]) -> list[dict]:
+    if len(songs) <= MAX_TRACKS_IN_PROMPT:
+        return songs
+    # Sehr große Bibliotheken: oft gehörte und zufällige Titel mischen, damit der Prompt handlich bleibt.
+    songs = sorted(songs, key=lambda s: -(s.get("playCount") or 0))
+    return songs[: MAX_TRACKS_IN_PROMPT // 2] + songs[MAX_TRACKS_IN_PROMPT // 2:][:: max(1, len(songs) // MAX_TRACKS_IN_PROMPT)]
+
+
+def with_artist_genres(songs: list[dict], genres: dict[str, list[str]]) -> list[dict]:
+    """Titel ohne Genre-Tag bekommen die Genres ihres Künstlers (aus Lidarr)."""
+    out = []
+    for s in songs:
+        if not s.get("genre"):
+            g = genres.get((s.get("artist") or "").lower())
+            if g:
+                s = {**s, "genre": "/".join(g[:3])}
+        out.append(s)
+    return out
+
+
+def build_daylist_prompt(lines: list[str], moment: str, count: int, avoid: list[str]) -> str:
+    rules = [
+        f"Wähle genau {count} Titel, die zu diesem Moment passen: {moment}.",
+        "Denk an Stimmung, Energie und Tempo der Tageszeit (morgens sanfter, nachmittags lebendiger, "
+        "abends gemütlich, nachts verträumt) und daran, ob Wochenende ist.",
+        "Verwende nur IDs aus der Bibliothek unten, keine doppelt. Ordne sie so, dass sie gut fließen.",
+        "Vielfalt: höchstens 4 Titel pro Künstler, nie zwei vom selben Künstler direkt hintereinander.",
+        "Gib einen verspielten deutschen Namen im Stil der Spotify-Daylist: Stimmung + Genre + Wochentag + Tageszeit, "
+        "z. B. „Verschlafener Indie-Sonntagmorgen“ (höchstens 6 Wörter).",
+        "Schreib eine Beschreibung in einem lockeren Satz.",
+        "Gib 3 bis 4 kurze Stichwörter (kleingeschrieben, ohne #), z. B. Stimmung und Genres.",
+    ]
+    if avoid:
+        rules.append("Diese IDs liefen heute schon in einer Daylist – nimm sie möglichst nicht wieder: " + ", ".join(avoid[:150]))
+    return (
+        "Erstelle eine Daylist.\n\nRegeln:\n- " + "\n- ".join(rules) +
+        '\n\nAntwortformat (nur dieses JSON):\n'
+        '{"name": "...", "description": "...", "tags": ["..."], "trackIds": ["..."]}\n\n'
+        "Bibliothek (id|Künstler|Titel|Album|Jahr|Genre|Wiedergaben):\n" + "\n".join(lines)
+    )
+
+
+def daylist(data_dir: Path, nav: dict, moment: str, artist_genres: dict[str, list[str]], avoid: list[str], count: int = 40) -> dict:
+    songs = with_artist_genres(library(nav), artist_genres)
+    if not songs:
+        raise AiError("Die Bibliothek ist leer")
+    songs = _sample(songs)
+    by_id = {s["id"]: s for s in songs}
+    answer = _extract_json(_ask_claude(data_dir, build_daylist_prompt([_line(s) for s in songs], moment, max(10, min(count, 80)), avoid)))
+    tracks = _tracks(answer, by_id)
+    if not tracks:
+        raise AiError("Claude hat keine passenden Titel gefunden")
+    tags = [str(t).strip().lstrip("#").lower()[:24] for t in (answer.get("tags") or []) if str(t).strip()][:4]
+    return {
+        "name": str(answer.get("name") or "Daylist")[:80],
+        "description": str(answer.get("description") or "")[:300],
+        "tags": tags,
+        "tracks": tracks,
+    }
+
+
+def create_playlist(data_dir: Path, nav: dict, wish: str, count: int, prefer_rare: bool, suggest_missing: bool,
+                    previous: list[str] | None = None, refine: str | None = None) -> dict:
+    songs = library(nav)
+    if not songs:
+        raise AiError("Die Bibliothek ist leer")
+    songs = _sample(songs)
+    by_id = {s["id"]: s for s in songs}
+    prompt = build_prompt([_line(s) for s in songs], wish, max(5, min(count, 100)), prefer_rare, suggest_missing, previous, refine)
+    answer = _extract_json(_ask_claude(data_dir, prompt))
+
+    tracks = _tracks(answer, by_id)
     if not tracks:
         raise AiError("Claude hat keine passenden Titel aus deiner Bibliothek gefunden")
     missing = [

@@ -100,6 +100,7 @@ object Routes {
     const val AI_PLAYLIST = "ai-playlist"
     const val SETTINGS = "settings"
     const val DOWNLOADS = "downloads"
+    const val DAYLIST = "daylist"
     const val OFFLINE_COLLECTION = "offline/{id}"
 }
 

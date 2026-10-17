@@ -381,6 +381,7 @@ private fun openCollection(app: NaviApp, nav: NavController, c: OfflineCollectio
         !app.offline.online || c.kind == OfflineCollection.SONGS -> nav.navigate("offline/${c.id}")
         c.kind == OfflineCollection.ALBUM -> nav.openAlbum(c.refId)
         c.kind == OfflineCollection.PLAYLIST -> nav.openPlaylist(c.refId)
+        c.kind == OfflineCollection.MIX && c.refId == dev.navidroid.data.DaylistRepository.OFFLINE_ID -> nav.navigate(Routes.DAYLIST)
         c.kind == OfflineCollection.MIX -> nav.navigate("mix/${c.refId}")
     }
 }

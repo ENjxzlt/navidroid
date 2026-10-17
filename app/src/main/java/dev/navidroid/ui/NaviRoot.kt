@@ -169,6 +169,7 @@ fun NaviRoot(app: NaviApp) {
                 })
             }
             composable(Routes.DOWNLOADS) { DownloadsScreen(app, nav) }
+            composable(Routes.DAYLIST) { DaylistScreen(app, nav) }
             composable(Routes.OFFLINE_COLLECTION) { e -> OfflineCollectionScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.LYRICS) { LyricsScreen(app, onClose = { nav.popBackStack() }) }
         }

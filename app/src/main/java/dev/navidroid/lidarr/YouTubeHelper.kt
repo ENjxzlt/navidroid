@@ -159,6 +159,15 @@ data class AiPlaylist(
 )
 
 @Serializable
+data class AiDaylist(
+    val name: String = "",
+    val description: String = "",
+    val tags: List<String> = emptyList(),
+    val tracks: List<AiTrack> = emptyList(),
+    val slotKey: String = "",
+)
+
+@Serializable
 data class ManualTrackPreview(
     val videoId: String,
     val index: Int = 0,
@@ -402,6 +411,22 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
             if (refine != null) put("refine", refine)
         }
         return decode(send(config(), "POST", "api/ai/playlist", body.toString(), client = slowHttp))
+    }
+
+    /** Daylist für ein Zeitfenster; der Helfer erstellt sie einmal pro Fenster über den Claude-Worker. */
+    suspend fun aiDaylist(navidrome: dev.navidroid.data.Credentials, slotKey: String, moment: String, count: Int = 40): AiDaylist {
+        val body = buildJsonObject {
+            put("navidrome", buildJsonObject {
+                put("url", navidrome.serverUrl)
+                put("user", navidrome.username)
+                put("token", navidrome.token)
+                put("salt", navidrome.salt)
+            })
+            put("slotKey", slotKey)
+            put("moment", moment)
+            put("count", count)
+        }
+        return decode(send(config(), "POST", "api/ai/daylist", body.toString(), client = slowHttp))
     }
 
     suspend fun retryJob(id: String): HelperJob = decode(send(config(), "POST", "api/jobs/$id/retry", "{}"))

@@ -113,6 +113,10 @@ fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit) {
             }
         }
 
+        if (filter != HomeFilter.Music) {
+            item(key = "daylist") { DaylistTile(app, nav, Modifier.padding(horizontal = 20.dp)) }
+        }
+
         val d = (data.state as? Load.Ok)?.value
         if (filter != HomeFilter.Mixes) {
             if (d != null) {

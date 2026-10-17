@@ -38,7 +38,7 @@ import ai
 import ma
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -852,6 +852,46 @@ def ai_playlist(req: AiPlaylistRequest) -> dict:
                                   req.suggestMissing, req.previous, req.refine)
     except ai.AiError as e:
         raise HTTPException(502, str(e)) from e
+
+
+class DaylistRequest(BaseModel):
+    navidrome: NavidromeAuth
+    slotKey: str  # z. B. "2026-10-17-vormittag" (Datum + Zeitfenster in der Zeitzone des Handys)
+    moment: str  # z. B. "Samstagvormittag, Wochenende"
+    count: int = 40
+
+
+_daylist_lock = threading.Lock()
+DAYLIST_FILE = DATA_DIR / "daylists.json"
+
+
+@app.post("/api/ai/daylist", dependencies=[Depends(require_token)])
+def ai_daylist(req: DaylistRequest) -> dict:
+    """Daylist je Zeitfenster; einmal erstellt, bekommen alle Anfragen im selben Fenster dieselbe Liste."""
+    if not ai.configured():
+        raise HTTPException(400, "Für die Daylist ist im Helfer kein Claude-Worker eingerichtet (CLAUDE_WORKER)")
+    user = f"{req.navidrome.url.rstrip('/')}|{req.navidrome.user}"
+    with _daylist_lock:
+        try:
+            store = json.loads(DAYLIST_FILE.read_text())
+        except (OSError, ValueError):
+            store = {}
+        mine = store.get(user) or {}
+        if req.slotKey in mine:
+            return mine[req.slotKey]
+        day = req.slotKey.rsplit("-", 1)[0]
+        avoid = [t["id"] for key, d in mine.items() if key.startswith(day) for t in d.get("tracks", [])]
+        try:
+            result = ai.daylist(DATA_DIR, req.navidrome.model_dump(), req.moment, artist_genres(), avoid, req.count)
+        except ai.AiError as e:
+            raise HTTPException(502, str(e)) from e
+        result["slotKey"] = req.slotKey
+        mine[req.slotKey] = result
+        store[user] = dict(sorted(mine.items())[-12:])
+        tmp = DAYLIST_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(store))
+        tmp.replace(DAYLIST_FILE)
+        return result
 
 
 class ManualPreviewRequest(BaseModel):

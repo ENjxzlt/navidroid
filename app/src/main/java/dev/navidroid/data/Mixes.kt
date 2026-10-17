@@ -16,12 +16,33 @@ class MixRepository(private val client: SubsonicClient?, private val artistGenre
 
     fun mix(id: String): Mix? = cached?.second?.firstOrNull { it.id == id }
 
-    suspend fun mixes(force: Boolean = false): List<Mix> {
+    @Volatile
+    private var lib: Triple<LocalDate, List<Song>, Map<String, List<String>>>? = null
+
+    /** Ganze Bibliothek samt Künstler-Genres, einmal am Tag geladen (für Mixe und Daylist). */
+    suspend fun library(force: Boolean = false): Pair<List<Song>, Map<String, List<String>>> {
         val today = LocalDate.now()
-        cached?.let { (day, list) -> if (!force && day == today) return list }
+        lib?.let { (day, songs, genres) -> if (!force && day == today && songs.isNotEmpty()) return songs to genres }
         val songs = client?.allSongs().orEmpty()
         // Ohne Genre-Tags in den Dateien: Genres des Künstlers aus Lidarr verwenden
         val genres = if (songs.any { !it.genre.isNullOrBlank() }) emptyMap() else artistGenres()
+        lib = Triple(today, songs, genres)
+        return songs to genres
+    }
+
+    /** Titel zu einem Stichwort (Genre), z. B. von der Daylist. */
+    suspend fun songsForTag(tag: String, size: Int = 40): List<Song> {
+        val (songs, genres) = library()
+        val t = tag.lowercase().trim()
+        val pool = songs.filter { s -> genresOf(s, genres).any { g -> g.lowercase().let { it.contains(t) || t.contains(it) } } }
+        val rnd = Random(System.currentTimeMillis())
+        return spread(pool.shuffled(rnd).distinctBy { it.id }.let { capPerArtist(it, size) })
+    }
+
+    suspend fun mixes(force: Boolean = false): List<Mix> {
+        val today = LocalDate.now()
+        cached?.let { (day, list) -> if (!force && day == today) return list }
+        val (songs, genres) = library(force)
         val result = build(songs, today, genres)
         cached = today to result
         return result
@@ -52,12 +73,7 @@ class MixRepository(private val client: SubsonicClient?, private val artistGenre
             return spread(chosen.toList().shuffled(rnd))
         }
 
-        fun genresOf(s: Song): List<String> {
-            val own = (s.genre ?: "").split(';', '/', ',').map { it.trim() }.filter { it.isNotEmpty() }
-            if (own.isNotEmpty()) return own
-            val artist = (s.artist ?: "").lowercase()
-            return artistGenres[artist] ?: artistGenres.entries.firstOrNull { artist.startsWith(it.key) }?.value ?: emptyList()
-        }
+        fun genresOf(s: Song): List<String> = Companion.genresOf(s, artistGenres)
         val candidates = songs
             .flatMap { s -> genresOf(s).map { it to s } }
             .groupBy({ it.first.replaceFirstChar(Char::uppercase) }, { it.second })
@@ -105,7 +121,7 @@ class MixRepository(private val client: SubsonicClient?, private val artistGenre
         }
     }
 
-    private fun spread(list: List<Song>): List<Song> {
+    internal fun spread(list: List<Song>): List<Song> {
         val result = mutableListOf<Song>()
         val pending = list.toMutableList()
         while (pending.isNotEmpty()) {
@@ -116,4 +132,29 @@ class MixRepository(private val client: SubsonicClient?, private val artistGenre
     }
 
     private fun hueOf(key: String) = (key.hashCode().absoluteValue % 360) / 360f
+
+    companion object {
+        fun genresOf(s: Song, artistGenres: Map<String, List<String>>): List<String> {
+            val own = (s.genre ?: "").split(';', '/', ',').map { it.trim() }.filter { it.isNotEmpty() }
+            if (own.isNotEmpty()) return own
+            val artist = (s.artist ?: "").lowercase()
+            return artistGenres[artist] ?: artistGenres.entries.firstOrNull { artist.startsWith(it.key) }?.value ?: emptyList()
+        }
+
+        /** Höchstens ein Drittel pro Künstler (bei wenigen Künstlern entsprechend mehr). */
+        fun capPerArtist(ordered: List<Song>, size: Int): List<Song> {
+            val artists = ordered.mapNotNull { it.artist }.toSet().size
+            val cap = maxOf(3, size / 3, (size + artists - 1) / maxOf(1, artists))
+            val per = HashMap<String?, Int>()
+            val out = ArrayList<Song>()
+            for (s in ordered) {
+                if (out.size >= size) break
+                val n = per.getOrDefault(s.artist, 0)
+                if (n >= cap) continue
+                per[s.artist] = n + 1
+                out += s
+            }
+            return out
+        }
+    }
 }
