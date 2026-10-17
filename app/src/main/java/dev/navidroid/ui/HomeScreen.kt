@@ -116,9 +116,9 @@ fun HomeScreen(
         Box(Modifier.weight(1f).then(if (offline) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)) {
             when (tab) {
                 // Ohne Verbindung zeigt der Start-Tab, was offline verfügbar ist.
-                HomeTab.Start -> if (offline) DownloadsContent(app, nav, onBack = null) else HomeStartTab(app, nav, onOpenSettings = { nav.navigate(Routes.SETTINGS) })
+                HomeTab.Start -> if (offline) DownloadsContent(app, nav, onBack = null) else HomeStartTab(app, nav, onOpenSettings = { nav.navigate(Routes.SETTINGS) }, onOpenRequests = { onTabChange(HomeTab.Requests) })
                 HomeTab.Library -> LibraryTab(app, nav)
-                HomeTab.Search -> SearchTab(app, nav)
+                HomeTab.Search -> SearchTab(app, nav, onOpenRequests = { onTabChange(HomeTab.Requests) })
                 HomeTab.Requests -> Column(Modifier.fillMaxSize()) { RequestsTab(app, onUpload = { nav.navigate(Routes.UPLOAD) }) }
             }
         }
@@ -458,7 +458,7 @@ private fun PlaylistsList(app: NaviApp, nav: NavController) {
 // ---- Suche ----
 
 @Composable
-private fun SearchTab(app: NaviApp, nav: NavController) {
+private fun SearchTab(app: NaviApp, nav: NavController, onOpenRequests: () -> Unit) {
     val player = LocalPlayer.current
     var query by rememberSaveable { mutableStateOf("") }
     var debounced by rememberSaveable { mutableStateOf("") }
@@ -476,10 +476,12 @@ private fun SearchTab(app: NaviApp, nav: NavController) {
         }
         val loader = rememberLoad("search:$debounced") { app.client.search(debounced) }
         LoadContent(loader) { r ->
-            if (r.artist.isEmpty() && r.album.isEmpty() && r.song.isEmpty()) {
+            val nothing = r.artist.isEmpty() && r.album.isEmpty() && r.song.isEmpty()
+            if (nothing && app.lidarrStore.config == null) {
                 return@LoadContent EmptyHint("Keine Treffer für „$debounced“")
             }
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+                if (nothing) item { Text("Nichts in deiner Bibliothek zu „$debounced“.", color = Navi.Muted, modifier = Modifier.padding(20.dp)) }
                 if (r.artist.isNotEmpty()) {
                     item { SectionHeader("Künstler", Modifier.padding(top = 16.dp, bottom = 4.dp)) }
                     items(r.artist, key = { "a_${it.id}" }) { artist ->
@@ -512,6 +514,7 @@ private fun SearchTab(app: NaviApp, nav: NavController) {
                         SongRow(song, onClick = { player.play(r.song, i) }, showCover = true)
                     }
                 }
+                missingSearchResults(app, debounced, r.album, onOpenRequests)
             }
         }
     }

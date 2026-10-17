@@ -37,9 +37,10 @@ from yt_dlp.version import __version__ as YTDLP_VERSION
 import ai
 import library
 import ma
+import suggestions
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -1246,6 +1247,57 @@ async def library_upload_cover(request: Request, artist: str = Query(...), album
     with _library_lock:
         library.set_cover(_need_library(), files, image, mime)
     return {"tracks": len(files)}
+
+
+# ---- Vorschläge zum Herunterladen ----
+
+SUGGESTIONS_FILE = DATA_DIR / "suggestions.json"
+_suggest_lock = threading.Lock()
+
+
+def _read_json(path: Path, default: Any) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return default
+
+
+@app.get("/api/suggestions", dependencies=[Depends(require_token)])
+def get_suggestions(refresh: bool = False) -> dict:
+    """Einmal am Tag neu berechnet; ausgeblendete Vorschläge bleiben weg."""
+    with _suggest_lock:
+        store = _read_json(SUGGESTIONS_FILE, {})
+        dismissed = set(store.get("dismissed") or [])
+        today = time.strftime("%Y-%m-%d")
+        cached = store.get("result")
+        if cached and cached.get("date") == today and not refresh:
+            result = cached
+        else:
+            artists = lidarr("GET", "artist") or []
+            albums = lidarr("GET", "album") or []
+            import datetime as _dt
+            result = suggestions.build(artists, albums, dismissed, _dt.date.today())
+            store["result"] = result
+            tmp = SUGGESTIONS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(store))
+            tmp.replace(SUGGESTIONS_FILE)
+    return {k: [i for i in v if i["key"] not in dismissed] if isinstance(v, list) else v for k, v in result.items()}
+
+
+class DismissRequest(BaseModel):
+    key: str
+
+
+@app.post("/api/suggestions/dismiss", dependencies=[Depends(require_token)])
+def dismiss_suggestion(req: DismissRequest) -> dict:
+    with _suggest_lock:
+        store = _read_json(SUGGESTIONS_FILE, {})
+        dismissed = list(dict.fromkeys((store.get("dismissed") or []) + [req.key]))[-1000:]
+        store["dismissed"] = dismissed
+        tmp = SUGGESTIONS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(store))
+        tmp.replace(SUGGESTIONS_FILE)
+    return {"ok": True}
 
 
 @app.get("/api/artist-genres", dependencies=[Depends(require_token)])

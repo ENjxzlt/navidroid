@@ -78,7 +78,7 @@ private sealed interface QuickItem {
 fun mixColor(hue: Float, lightness: Float = 0.26f): Color = Color(ColorUtils.HSLToColor(floatArrayOf(hue * 360f, 0.42f, lightness)))
 
 @Composable
-fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit) {
+fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit, onOpenRequests: () -> Unit = {}) {
     var filter by rememberSaveable { mutableStateOf(HomeFilter.All) }
     val data = rememberLoad("home:${PlaylistBus.version}:${LibraryBus.version}") {
         coroutineScope {
@@ -152,6 +152,8 @@ fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit) {
                 is Load.Err -> item { Text("Mixe: ${m.message}", color = Navi.Muted, modifier = Modifier.padding(horizontal = 20.dp)) }
             }
         }
+
+        if (filter != HomeFilter.Mixes) suggestionRows(app, onOpenRequests)
 
         if (filter != HomeFilter.Mixes && d != null) {
             albumRow("Zuletzt gespielt", d.recent, nav)

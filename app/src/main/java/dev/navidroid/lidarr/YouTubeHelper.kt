@@ -169,6 +169,21 @@ data class AiDaylist(
 )
 
 @Serializable
+data class Suggestion(
+    val key: String,
+    val title: String = "",
+    val artist: String = "",
+    val year: Int? = null,
+    val cover: String? = null,
+    val reason: String = "",
+    val source: String = "",
+    val foreignAlbumId: String? = null,
+)
+
+@Serializable
+data class Suggestions(val forYou: List<Suggestion> = emptyList(), val newReleases: List<Suggestion> = emptyList())
+
+@Serializable
 data class AlbumFilesInfo(val tracks: Int = 0, val bytes: Long = 0, val matched: Int = 0)
 
 @Serializable
@@ -467,6 +482,14 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
             put("count", count)
         }
         return decode(send(config(), "POST", "api/ai/daylist", body.toString(), client = slowHttp))
+    }
+
+    // ---- Vorschläge ----
+
+    suspend fun suggestions(): Suggestions = decode(send(config(), "GET", "api/suggestions", client = slowHttp))
+
+    suspend fun dismissSuggestion(key: String) {
+        send(config(), "POST", "api/suggestions/dismiss", buildJsonObject { put("key", key) }.toString())
     }
 
     // ---- Bibliothek bearbeiten ----
