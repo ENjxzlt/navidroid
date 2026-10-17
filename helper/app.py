@@ -35,9 +35,9 @@ from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
 import ai
-from matching import is_youtube_url, match, normalize, safe_name
+from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -46,6 +46,8 @@ LIDARR_KEY = os.environ.get("LIDARR_API_KEY", "")
 STAGING = Path(os.environ.get("STAGING_DIR", "/downloads/navidroid"))
 LIDARR_STAGING = os.environ.get("LIDARR_STAGING_DIR", str(STAGING)).rstrip("/")
 VIDEO_DIR = Path(os.environ.get("VIDEO_DIR", "/videos"))
+# Musikordner für den Import ohne Lidarr (Navidrome liest ihn ein). Leer = Funktion aus.
+MUSIC_DIR = Path(os.environ["MUSIC_DIR"]) if os.environ.get("MUSIC_DIR") else None
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 AUDIO_QUALITY = os.environ.get("AUDIO_QUALITY", "320")
 VIDEO_MAX_HEIGHT = int(os.environ.get("VIDEO_MAX_HEIGHT", "720"))
@@ -185,6 +187,7 @@ STEP_LABELS = {
     "convert": "In MP3 umwandeln",
     "tag": "Tags & Cover setzen",
     "import": "In Lidarr importieren",
+    "library": "In Bibliothek ablegen",
     "videos": "Musikvideos laden",
 }
 
@@ -242,6 +245,8 @@ def _video_id(key: str) -> str:
 
 
 def run_job(job: dict) -> None:
+    if job.get("manual"):
+        return run_manual_job(job)
     album, tracks, release = album_info(job["albumId"])
     artist = (album.get("artist") or {}).get("artistName") or job["artist"]
     by_track = {t["id"]: t for t in tracks}
@@ -415,6 +420,124 @@ def run_job(job: dict) -> None:
         _video_queue.put((job["id"], tasks))
 
 
+def _square_cover(url: str | None, workdir: Path) -> bytes | None:
+    """Vorschaubild der Playlist laden und mittig quadratisch zuschneiden."""
+    if not url:
+        return None
+    try:
+        raw = workdir / "_thumb"
+        raw.write_bytes(requests.get(url, timeout=30).content)
+        out = workdir / "_cover.jpg"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(raw), "-vf", "crop='min(iw,ih)':'min(iw,ih)',scale=600:600",
+                        "-q:v", "3", str(out)], check=True)
+        return out.read_bytes()
+    except Exception as e:  # ohne Cover geht es auch
+        log.warning("Cover konnte nicht erstellt werden: %s", e)
+        return None
+
+
+def run_manual_job(job: dict) -> None:
+    """Import ohne Lidarr: MP3s mit Tags direkt im Musikordner ablegen."""
+    if MUSIC_DIR is None:
+        raise RuntimeError("Import ohne Lidarr ist im Helfer nicht eingerichtet (MUSIC_DIR fehlt)")
+    m = job["manual"]
+    artist, album_name, year = m["artist"].strip(), m["album"].strip(), m.get("year")
+    tracks = sorted(m["tracks"], key=lambda t: t["number"])
+    total = len(tracks)
+    workdir = STAGING / job["id"]
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    _update(job, "download", state="active")
+    files: list[tuple[dict, Path]] = []
+    skipped: list[dict] = []
+    sources: dict[str, tuple[Path, list[dict]] | Exception] = {}
+    for i, t in enumerate(tracks, 1):
+        base = f"{t['number']:02d} - {safe_name(t['title'])}"
+        mp3 = workdir / f"{base}.mp3"
+        error: Exception | None = None
+        for attempt in range(3):
+            try:
+                vid = t["videoId"]
+                if "#" in vid:
+                    source_id, chapter = vid.split("#", 1)
+                    if source_id not in sources or isinstance(sources[source_id], Exception):
+                        try:
+                            sources[source_id] = _download_source(source_id, workdir)
+                        except Exception as e:
+                            sources[source_id] = e
+                            raise
+                    src, chapters = sources[source_id]  # type: ignore[misc]
+                    c = chapters[int(chapter) - 1]
+                    cmd = ["ffmpeg", "-loglevel", "error", "-y", "-ss", str(c.get("start_time") or 0)]
+                    if c.get("end_time"):
+                        cmd += ["-to", str(c["end_time"])]
+                    subprocess.run(cmd + ["-i", str(src), "-vn", "-c:a", "libmp3lame", "-b:a", f"{AUDIO_QUALITY}k", str(mp3)], check=True)
+                else:
+                    with YoutubeDL(ydl_opts(
+                        noplaylist=True, format="bestaudio/best", outtmpl=str(workdir / f"{base}.%(ext)s"),
+                        postprocessors=[{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": AUDIO_QUALITY}],
+                    )) as ydl:
+                        ydl.download([video_url(vid)])
+                if not mp3.exists():
+                    raise RuntimeError("Umwandlung in MP3 fehlgeschlagen")
+                error = None
+                break
+            except Exception as e:
+                error = e
+                if "confirm your age" in str(e).lower():
+                    break
+                time.sleep(5 * (attempt + 1))
+        _update(job, "download", done=i)
+        if error is not None:
+            skipped.append({"title": t["title"], "reason": friendly_error(error)})
+            _update(job, skipped=list(skipped))
+            continue
+        files.append((t, mp3))
+        _update(job, "convert", state="active", done=len(files))
+    if not files:
+        raise RuntimeError(skipped[0]["reason"] if skipped else "Kein Titel konnte geladen werden")
+    _update(job, "download", state="done")
+    _update(job, "convert", state="done")
+
+    _update(job, "tag", state="active")
+    cover = _square_cover(m.get("thumbnail"), workdir)
+    for i, (t, path) in enumerate(files, 1):
+        try:
+            ID3(path).delete()
+        except ID3NoHeaderError:
+            pass
+        tags = ID3()
+        tags.add(TIT2(encoding=3, text=t["title"]))
+        tags.add(TPE1(encoding=3, text=artist))
+        tags.add(TPE2(encoding=3, text=artist))
+        tags.add(TALB(encoding=3, text=album_name))
+        tags.add(TRCK(encoding=3, text=f"{t['number']}/{total}"))
+        tags.add(TPOS(encoding=3, text="1/1"))
+        if year:
+            tags.add(TDRC(encoding=3, text=str(year)))
+        if cover:
+            tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover))
+        tags.save(path, v2_version=3)
+        _update(job, "tag", done=i)
+    _update(job, "tag", state="done")
+
+    # Ablegen – vorhandene Dateien werden nie überschrieben
+    _update(job, "library", state="active")
+    folder = MUSIC_DIR / safe_name(artist) / safe_name(f"{album_name} ({year})" if year else album_name)
+    folder.mkdir(parents=True, exist_ok=True)
+    if cover and not (folder / "cover.jpg").exists():
+        (folder / "cover.jpg").write_bytes(cover)
+    for t, path in files:
+        target = folder / path.name
+        if target.exists():
+            skipped.append({"title": t["title"], "reason": "Datei existiert bereits – nicht überschrieben"})
+            continue
+        shutil.move(str(path), str(target))
+    _update(job, skipped=list(skipped))
+    _update(job, "library", state="done", done=1)
+    shutil.rmtree(workdir, ignore_errors=True)
+
+
 _video_queue: "queue.Queue[tuple[str, list[dict]]]" = queue.Queue()
 _video_lock = threading.Lock()
 
@@ -525,7 +648,7 @@ def health() -> dict:
     except HTTPException as e:
         lidarr_version, lidarr_error = None, e.detail
     return {"version": VERSION, "ytDlp": YTDLP_VERSION, "lidarr": lidarr_version, "lidarrError": lidarr_error,
-            "ai": ai.configured()}
+            "ai": ai.configured(), "manual": MUSIC_DIR is not None}
 
 
 @app.post("/api/preview", dependencies=[Depends(require_token)])
@@ -654,7 +777,7 @@ def create_job(req: JobRequest) -> dict:
 
 
 def _public(job: dict) -> dict:
-    return {k: v for k, v in job.items() if k not in ("mapping", "url")}
+    return {k: v for k, v in job.items() if k not in ("mapping", "url", "manual")}
 
 
 @app.get("/api/jobs", dependencies=[Depends(require_token)])
@@ -728,6 +851,74 @@ def ai_playlist(req: AiPlaylistRequest) -> dict:
                                   req.suggestMissing, req.previous, req.refine)
     except ai.AiError as e:
         raise HTTPException(502, str(e)) from e
+
+
+class ManualPreviewRequest(BaseModel):
+    url: str
+    artist: str = ""
+
+
+class ManualTrack(BaseModel):
+    videoId: str
+    title: str
+    number: int
+
+
+class ManualJobRequest(BaseModel):
+    url: str
+    artist: str
+    album: str
+    year: int | None = None
+    thumbnail: str | None = None
+    tracks: list[ManualTrack]
+
+
+@app.post("/api/manual/preview", dependencies=[Depends(require_token)])
+def manual_preview(req: ManualPreviewRequest) -> dict:
+    if MUSIC_DIR is None:
+        raise HTTPException(400, "Import ohne Lidarr ist im Helfer nicht eingerichtet (MUSIC_DIR)")
+    meta, entries = playlist_entries(req.url)
+    return {
+        "playlist": meta,
+        "tracks": [{"videoId": e["id"], "index": e["index"], "title": clean_title(e["title"], req.artist),
+                    "source": e["title"], "seconds": e["seconds"]} for e in entries],
+    }
+
+
+@app.post("/api/manual/jobs", dependencies=[Depends(require_token)])
+def create_manual_job(req: ManualJobRequest) -> dict:
+    if MUSIC_DIR is None:
+        raise HTTPException(400, "Import ohne Lidarr ist im Helfer nicht eingerichtet (MUSIC_DIR)")
+    if not is_youtube_url(req.url):
+        raise HTTPException(400, "Bitte einen Link von youtube.com oder youtu.be angeben")
+    if not req.artist.strip() or not req.album.strip():
+        raise HTTPException(400, "Künstler und Album angeben")
+    if not req.tracks:
+        raise HTTPException(400, "Keine Titel ausgewählt")
+    n = len(req.tracks)
+    steps = [{"key": k, "label": STEP_LABELS[k], "done": 0, "total": n, "state": "todo"} for k in ("download", "convert", "tag")]
+    steps.append({"key": "library", "label": STEP_LABELS["library"], "done": 0, "total": 1, "state": "todo"})
+    job = {
+        "id": uuid.uuid4().hex[:12],
+        "url": req.url,
+        "albumId": 0,
+        "title": req.album.strip(),
+        "artist": req.artist.strip(),
+        "videos": False,
+        "mapping": [],
+        "manual": {"artist": req.artist, "album": req.album, "year": req.year, "thumbnail": req.thumbnail,
+                   "tracks": [t.model_dump() for t in req.tracks]},
+        "steps": steps,
+        "status": "queued",
+        "error": None,
+        "skipped": [],
+        "createdAt": int(time.time() * 1000),
+    }
+    with _lock:
+        _jobs[job["id"]] = job
+    _save_jobs()
+    _queue.put(job["id"])
+    return _public(job)
 
 
 @app.get("/api/videos/find", dependencies=[Depends(require_token)])

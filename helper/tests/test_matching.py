@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from matching import is_youtube_url, match, normalize, safe_name  # noqa: E402
+from matching import clean_title, is_youtube_url, match, normalize, safe_name  # noqa: E402
 
 
 class MatchingTest(unittest.TestCase):
@@ -49,6 +49,14 @@ class MatchingTest(unittest.TestCase):
         self.assertFalse(is_youtube_url("https://evil.example/youtube.com"))
         self.assertFalse(is_youtube_url("file:///etc/passwd"))
         self.assertEqual(safe_name('AC/DC: "Back"?'), "AC_DC_ _Back__")
+
+
+class CleanTitleTest(unittest.TestCase):
+    def test_clean_title_keeps_case_and_removes_noise(self):
+        self.assertEqual(clean_title("Kraftklub - Songs für Liam (Official Video)", "Kraftklub"), "Songs für Liam")
+        self.assertEqual(clean_title("Ivy [HD]", "Frank Ocean"), "Ivy")
+        self.assertEqual(clean_title("Nikes | Frank Ocean Topic", "Frank Ocean"), "Nikes")
+        self.assertEqual(clean_title("Solo (feat. X)", "Y"), "Solo (feat. X)")
 
 
 if __name__ == "__main__":

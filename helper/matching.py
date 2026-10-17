@@ -104,3 +104,19 @@ ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtu
 def is_youtube_url(url: str) -> bool:
     m = re.match(r"^https?://([^/?#]+)", url.strip(), re.I)
     return bool(m) and m.group(1).lower() in ALLOWED_HOSTS
+
+
+_CLEAN_BRACKETS = re.compile(
+    r"\s*[\(\[][^\)\]]*\b(official|audio|video|lyrics?|visuali[sz]er|hd|hq|4k|remaster(ed)?|topic|mv|clip|full album)\b[^\)\]]*[\)\]]",
+    re.I,
+)
+
+
+def clean_title(title: str, artist: str = "") -> str:
+    """Lesbarer Titel aus einem Videotitel: ohne "Künstler - " und ohne Zusätze wie "(Official Audio)"."""
+    t = _CLEAN_BRACKETS.sub("", title)
+    if artist.strip():
+        t = re.sub(rf"^\s*{re.escape(artist.strip())}\s*[-–—:|~]+\s*", "", t, flags=re.I)
+    t = re.sub(r"\s*\|\s*.*$", "", t)  # "Titel | Kanalname"
+    t = re.sub(r"\s{2,}", " ", t).strip(" -–—")
+    return t or title.strip()

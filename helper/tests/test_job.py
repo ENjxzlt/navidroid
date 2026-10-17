@@ -9,6 +9,7 @@ from unittest import mock
 
 TMP = tempfile.mkdtemp()
 os.environ.update({
+    "MUSIC_DIR": f"{TMP}/music",
     "HELPER_TOKEN": "t", "LIDARR_URL": "http://lidarr", "LIDARR_API_KEY": "k",
     "STAGING_DIR": f"{TMP}/staging", "LIDARR_STAGING_DIR": "/lidarr-sees/staging",
     "VIDEO_DIR": f"{TMP}/videos", "DATA_DIR": f"{TMP}/data",
@@ -144,6 +145,27 @@ class ChapterJobTest(unittest.TestCase):
             app.run_job(job)
         # Quell-Tonspur wurde vor dem Import entfernt, nur die zwei Titel gehen an Lidarr
         self.assertEqual(seen, [["01 - First Song.mp3", "02 - Second Song.mp3"]])
+        self.assertEqual([s["state"] for s in job["steps"]], ["done"] * 4)
+
+
+class ManualJobTest(unittest.TestCase):
+    def test_manual_import_writes_tagged_files_into_music_dir(self):
+        job = {
+            "id": "job3", "albumId": 0, "artist": "Indie", "videos": False, "mapping": [],
+            "manual": {"artist": "Indie Band", "album": "Kleines Album", "year": 2024, "thumbnail": None,
+                       "tracks": [{"videoId": "v2", "title": "Zweiter", "number": 2}, {"videoId": "v1", "title": "Erster", "number": 1}]},
+            "steps": [{"key": k, "label": k, "done": 0, "total": 2, "state": "todo"} for k in ("download", "convert", "tag", "library")],
+            "status": "running", "createdAt": 0,
+        }
+        app._jobs[job["id"]] = job
+        with mock.patch.object(app, "YoutubeDL", FakeYDL):
+            app.run_job(job)
+        folder = Path(os.environ["MUSIC_DIR"]) / "Indie Band" / "Kleines Album (2024)"
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), ["01 - Erster.mp3", "02 - Zweiter.mp3"])
+        tags = ID3(folder / "01 - Erster.mp3")
+        self.assertEqual(str(tags["TALB"]), "Kleines Album")
+        self.assertEqual(str(tags["TRCK"]), "1/2")
+        self.assertEqual(str(tags["TDRC"]), "2024")
         self.assertEqual([s["state"] for s in job["steps"]], ["done"] * 4)
 
 
