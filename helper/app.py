@@ -35,9 +35,10 @@ from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
 import ai
+import ma
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -919,6 +920,69 @@ def create_manual_job(req: ManualJobRequest) -> dict:
     _save_jobs()
     _queue.put(job["id"])
     return _public(job)
+
+
+class MaAuth(BaseModel):
+    url: str
+    token: str
+
+
+class MaPlayRequest(BaseModel):
+    ma: MaAuth
+    playerId: str
+    navidrome: NavidromeAuth
+    songIds: list[str]
+
+
+class MaCommandRequest(BaseModel):
+    ma: MaAuth
+    playerId: str
+    command: str
+    value: float | None = None
+
+
+class MaStateRequest(BaseModel):
+    ma: MaAuth
+    playerId: str
+
+
+def _ma(fn, *args):
+    try:
+        return fn(*args)
+    except ma.MaError as e:
+        raise HTTPException(502, str(e)) from e
+
+
+@app.post("/api/ma/players", dependencies=[Depends(require_token)])
+def ma_players(req: MaAuth) -> list[dict]:
+    return _ma(ma.players, req.url, req.token)
+
+
+@app.post("/api/ma/play", dependencies=[Depends(require_token)])
+def ma_play(req: MaPlayRequest) -> dict:
+    _ma(ma.play, req.ma.url, req.ma.token, req.playerId, req.navidrome.model_dump(), req.songIds)
+    return {"ok": True}
+
+
+@app.post("/api/ma/command", dependencies=[Depends(require_token)])
+def ma_command(req: MaCommandRequest) -> dict:
+    _ma(ma.command, req.ma.url, req.ma.token, req.playerId, req.command, req.value)
+    return {"ok": True}
+
+
+@app.post("/api/ma/state", dependencies=[Depends(require_token)])
+def ma_state(req: MaStateRequest) -> dict:
+    return _ma(ma.state, req.ma.url, req.ma.token, req.playerId)
+
+
+@app.get("/api/artist-genres", dependencies=[Depends(require_token)])
+def artist_genres() -> dict:
+    """Genres je Künstler aus Lidarr (MusicBrainz) – Grundlage für die Mixe, wenn Dateien keine Genres haben."""
+    try:
+        artists = lidarr("GET", "artist") or []
+    except HTTPException:
+        return {}
+    return {a["artistName"].lower(): a.get("genres") or [] for a in artists if a.get("artistName")}
 
 
 @app.get("/api/videos/find", dependencies=[Depends(require_token)])

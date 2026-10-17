@@ -9,12 +9,14 @@ import ai  # noqa: E402
 
 class AiTest(unittest.TestCase):
     def test_only_library_tracks_are_kept(self):
-        songs = [{"id": "a", "title": "Nikes", "artist": "Frank Ocean", "album": "Blonde"},
+        songs = [{"id": "a", "title": "Nikes", "artist": "Frank Ocean", "album": "Blonde", "duration": None, "year": None},
                  {"id": "b", "title": "Ivy", "artist": "Frank Ocean", "album": "Blonde"}]
         answer = '{"name": "Test", "description": "Eins.", "trackIds": ["b", "x", "a", "b"], "missing": [{"artist": "Sault", "album": "Untitled (Rise)"}]}'
         with mock.patch.object(ai, "library", return_value=songs), mock.patch.object(ai, "_ask_claude", return_value="Hier: " + answer):
             res = ai.create_playlist(None, {}, "ruhig", 10, False, True)
         self.assertEqual([t["id"] for t in res["tracks"]], ["b", "a"])
+        self.assertNotIn(None, [v for t in res["tracks"] for v in t.values()])
+        self.assertEqual(res["tracks"][1]["duration"], 0)
         self.assertEqual(res["missing"][0]["album"], "Untitled (Rise)")
         self.assertEqual(res["name"], "Test")
 

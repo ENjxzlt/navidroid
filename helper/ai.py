@@ -184,7 +184,10 @@ def create_playlist(data_dir: Path, nav: dict, wish: str, count: int, prefer_rar
         s = by_id.get(str(tid))
         if s and s["id"] not in seen:
             seen.add(s["id"])
-            tracks.append({k: s.get(k) for k in ("id", "title", "artist", "album", "albumId", "coverArt", "duration", "year")})
+            track = {k: s.get(k) for k in ("id", "title", "artist", "album", "albumId", "coverArt", "duration", "year")}
+            track["title"] = track["title"] or ""
+            track["duration"] = int(track["duration"] or 0)
+            tracks.append({k: v for k, v in track.items() if v is not None})
     if not tracks:
         raise AiError("Claude hat keine passenden Titel aus deiner Bibliothek gefunden")
     missing = [
