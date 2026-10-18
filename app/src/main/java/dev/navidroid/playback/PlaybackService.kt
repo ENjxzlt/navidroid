@@ -12,7 +12,8 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import dev.navidroid.MainActivity
@@ -27,8 +28,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-class PlaybackService : MediaSessionService() {
-    private var session: MediaSession? = null
+class PlaybackService : MediaLibraryService() {
+    private var session: MediaLibrarySession? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate() {
@@ -64,8 +65,8 @@ class PlaybackService : MediaSessionService() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        session = MediaSession.Builder(this, player)
-            .setCallback(Callback(this, app))
+        // MediaLibrarySession: zusätzlich Menüs für Android Auto und Sprachsteuerung (siehe AutoLibrary)
+        session = MediaLibrarySession.Builder(this, player, AutoLibrary(app, scope))
             .setSessionActivity(openApp)
             .build()
         Scrobbler(player, client, scope)
@@ -75,24 +76,7 @@ class PlaybackService : MediaSessionService() {
         NowPlayingWidget.attach(this, player, scope)
     }
 
-    /**
-     * MediaItems vom Controller kommen ohne URI an – die Stream-URL wird hier
-     * aus der Song-ID (mediaId) aufgebaut.
-     */
-    private class Callback(private val context: android.content.Context, private val app: NaviApp) : MediaSession.Callback {
-        override fun onAddMediaItems(
-            mediaSession: MediaSession,
-            controller: MediaSession.ControllerInfo,
-            mediaItems: MutableList<MediaItem>,
-        ): ListenableFuture<MutableList<MediaItem>> {
-            val bitrate = currentBitrate(app)
-            return Futures.immediateFuture(
-                mediaItems.map { item -> withStream(app, item, bitrate) }.toMutableList()
-            )
-        }
-    }
-
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = session
 
     // Knöpfe im Widget
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
