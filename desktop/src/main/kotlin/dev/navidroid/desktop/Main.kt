@@ -178,6 +178,8 @@ class DesktopApp {
                     replayGain = remote.int("replayGain") ?: settings.replayGain,
                     crossfade = remote.int("crossfade") ?: settings.crossfade,
                     coverColors = remote.bool("coverColors") ?: settings.coverColors,
+                    maUrl = remote.str("maUrl") ?: settings.maUrl,
+                    maToken = remote.str("maToken") ?: settings.maToken,
                     syncedAt = ts,
                 ))
             }
@@ -193,6 +195,10 @@ class DesktopApp {
                 put("replayGain", kotlinx.serialization.json.JsonPrimitive(settings.replayGain))
                 put("crossfade", kotlinx.serialization.json.JsonPrimitive(settings.crossfade))
                 put("coverColors", kotlinx.serialization.json.JsonPrimitive(settings.coverColors))
+                if (settings.maUrl.isNotBlank()) {
+                    put("maUrl", kotlinx.serialization.json.JsonPrimitive(settings.maUrl))
+                    put("maToken", kotlinx.serialization.json.JsonPrimitive(settings.maToken))
+                }
             }
             runCatching { helper.putSettings(user, data, now) }.onSuccess { updateSettings(settings.copy(syncedAt = now)) }
         }

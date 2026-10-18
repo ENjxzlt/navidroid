@@ -62,6 +62,9 @@ data class DesktopSettings(
     val downloadDir: String = "",
     /** Heruntergeladene Playlists und Mixe automatisch aktuell halten. */
     val autoSyncDownloads: Boolean = true,
+    /** Music Assistant (vom Handy übernommen). */
+    val maUrl: String = "",
+    val maToken: String = "",
     /** Zeitstempel des letzten Abgleichs mit dem Handy (über den Helfer). */
     val syncedAt: Long = 0,
 ) {
