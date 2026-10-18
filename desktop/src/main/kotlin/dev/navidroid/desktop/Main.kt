@@ -304,7 +304,7 @@ private fun LoginScreen(app: DesktopApp) {
                             if (helperUrl.isNotBlank()) {
                                 val url = dev.navidroid.lidarr.LidarrStore.normalizeUrl(helperUrl)
                                 app.helper.health(url, helperToken)
-                                app.helperStore.save(HelperConfig(url, helperToken.trim(), false))
+                                app.helperStore.save(HelperConfig(url, helperToken.trim(), app.helperStore.config?.videos ?: false))
                             }
                             app.session.save(c)
                             app.loggedIn = true
@@ -331,6 +331,7 @@ private fun MainLayout(app: DesktopApp) {
         }
     }
     Column(Modifier.fillMaxSize()) {
+        OfflineBanner(app)
         Row(Modifier.weight(1f).fillMaxWidth().padding(start = 8.dp, top = 8.dp, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Sidebar(app, Modifier.width(250.dp).fillMaxHeight())
             Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(16.dp)).background(Color(0xFF121317))) {

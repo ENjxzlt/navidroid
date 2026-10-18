@@ -32,6 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Search
@@ -65,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import dev.navidroid.data.Album
 import dev.navidroid.data.Daylist
 import dev.navidroid.data.Mix
+import dev.navidroid.data.Playlist
 import dev.navidroid.data.Song
 import dev.navidroid.lidarr.LidarrAlbum
 import dev.navidroid.lidarr.Suggestion
@@ -181,8 +184,27 @@ private fun QuickTiles(app: DesktopApp, albums: List<Album>) {
     }
 }
 
+/** Albumkachel mit Rechtsklick-Menü. */
+@Composable
+private fun AlbumCard(app: DesktopApp, album: Album, modifier: Modifier = Modifier) {
+    val ctx = rememberContextMenu()
+    Box(modifier.contextMenu(ctx)) {
+        AlbumTile(app, album, Modifier.fillMaxWidth()) { app.nav.go(Screen.AlbumPage(album.id)) }
+        ContextMenuAnchor(ctx) { AlbumContextMenu(app, album, ctx.expanded, { ctx.expanded = false }) }
+    }
+}
+
 @Composable
 private fun QuickTile(app: DesktopApp, album: Album, modifier: Modifier) {
+    val ctx = rememberContextMenu()
+    Box(modifier.contextMenu(ctx)) {
+        QuickTileContent(app, album, Modifier.fillMaxWidth())
+        ContextMenuAnchor(ctx) { AlbumContextMenu(app, album, ctx.expanded, { ctx.expanded = false }) }
+    }
+}
+
+@Composable
+private fun QuickTileContent(app: DesktopApp, album: Album, modifier: Modifier) {
     val hover = remember { MutableInteractionSource() }
     val hovered by hover.collectIsHoveredAsState()
     Row(
@@ -262,7 +284,7 @@ private fun LazyListScope.albumRow(app: DesktopApp, title: String, albums: List<
         Column {
             SectionTitle(title)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(albums, key = { it.id }) { a -> AlbumTile(app, a, Modifier.width(190.dp)) { app.nav.go(Screen.AlbumPage(a.id)) } }
+                items(albums, key = { it.id }) { a -> AlbumCard(app, a, Modifier.width(190.dp)) }
             }
         }
     }
@@ -436,13 +458,14 @@ fun DaylistScreen(app: DesktopApp) {
                             Icon(Icons.Rounded.Shuffle, null, tint = Color.White)
                             Text("Zufällig", color = Color.White, modifier = Modifier.padding(start = 6.dp))
                         }
+                        DownloadToggle(app, "mix", "daylist", d.name, null, d.songs)
                     }
                     Text("Neu um ${slot.startLabel} · ändert sich wieder um ${slot.endLabel}", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.7f))
                 }
             }
         }
         item { TableHeader(showCover = true) }
-        itemsIndexed(d.songs) { i, s -> Box(Modifier.padding(horizontal = 20.dp)) { SongRow(app, s, i, showCover = true) { app.player.play(d.songs, i) } } }
+        itemsIndexed(d.songs) { i, s -> Box(Modifier.padding(horizontal = 20.dp)) { SongListRow(app, s, i, showCover = true) { app.player.play(d.songs, i) } } }
     }
 }
 
@@ -496,7 +519,7 @@ fun SearchScreen(app: DesktopApp) {
                         }
                         if (r.song.isNotEmpty()) Column(Modifier.weight(1f)) {
                             SectionTitle("Titel")
-                            r.song.take(5).forEachIndexed { i, s -> SongRow(app, s, i, showCover = true) { app.player.play(r.song, i) } }
+                            r.song.take(5).forEachIndexed { i, s -> SongListRow(app, s, i, showCover = true) { app.player.play(r.song, i) } }
                         }
                     }
                 }
@@ -518,7 +541,7 @@ fun SearchScreen(app: DesktopApp) {
                     Column {
                         SectionTitle("Alben")
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(r.album, key = { it.id }) { a -> AlbumTile(app, a, Modifier.width(180.dp)) { app.nav.go(Screen.AlbumPage(a.id)) } }
+                            items(r.album, key = { it.id }) { a -> AlbumCard(app, a, Modifier.width(180.dp)) }
                         }
                     }
                 }
@@ -575,7 +598,7 @@ fun AlbumsScreen(app: DesktopApp) {
         }
         LoadBox(albums) { list ->
             LazyVerticalGrid(GridCells.Adaptive(190.dp), contentPadding = PaddingValues(horizontal = 26.dp, vertical = 8.dp), modifier = Modifier.fillMaxSize()) {
-                items(list, key = { it.id }) { a -> AlbumTile(app, a) { app.nav.go(Screen.AlbumPage(a.id)) } }
+                items(list, key = { it.id }) { a -> AlbumCard(app, a) }
             }
         }
     }
@@ -616,7 +639,10 @@ private fun accentBrush() = Brush.verticalGradient(listOf(MaterialTheme.colorSch
 
 /** Kopf für Album, Playlist und Mix. */
 @Composable
-private fun Header(app: DesktopApp, cover: String?, overline: String, title: String, subtitle: String?, meta: String, songs: List<Song>, onSubtitle: (() -> Unit)? = null, tile: (@Composable () -> Unit)? = null) {
+private fun Header(
+    app: DesktopApp, cover: String?, overline: String, title: String, subtitle: String?, meta: String, songs: List<Song>,
+    onSubtitle: (() -> Unit)? = null, tile: (@Composable () -> Unit)? = null, actions: @Composable () -> Unit = {},
+) {
     Row(
         Modifier.fillMaxWidth().background(accentBrush()).padding(start = 32.dp, end = 32.dp, top = 64.dp, bottom = 28.dp),
         horizontalArrangement = Arrangement.spacedBy(28.dp),
@@ -645,6 +671,7 @@ private fun Header(app: DesktopApp, cover: String?, overline: String, title: Str
                     Icon(Icons.Rounded.Radio, null)
                     Text("Song-Radio", modifier = Modifier.padding(start = 6.dp))
                 }
+                actions()
             }
         }
     }
@@ -674,12 +701,51 @@ private fun totalTime(songs: List<Song>): String? = songs.sumOf { it.duration }.
 /** Titelliste mit Seitenabstand unter einem vollbreiten Kopf. */
 private fun LazyListScope.songList(app: DesktopApp, songs: List<Song>, showCover: Boolean) {
     item { TableHeader(showCover) }
-    itemsIndexed(songs) { i, s -> Box(Modifier.padding(horizontal = 20.dp)) { SongRow(app, s, i, showCover = showCover) { app.player.play(songs, i) } } }
+    itemsIndexed(songs) { i, s -> Box(Modifier.padding(horizontal = 20.dp)) { SongListRow(app, s, i, showCover = showCover) { app.player.play(songs, i) } } }
+}
+
+/** Server nicht erreichbar: heruntergeladene Sammlung anzeigen, sonst den Fehler weiterreichen. */
+private suspend fun <T> offlineFallback(app: DesktopApp, id: String, online: suspend () -> T, offline: (OfflineCollection) -> T): T = try {
+    online()
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    app.offline.collection(id)?.takeIf { it.songs.isNotEmpty() }?.let(offline) ?: throw e
+}
+
+/** Knopf „Herunterladen“ für Album, Playlist oder Mix; zeigt Fortschritt und entfernt beim zweiten Klick. */
+@Composable
+private fun DownloadToggle(app: DesktopApp, kind: String, id: String, name: String, coverArt: String?, songs: List<Song>) {
+    val state = app.offline.state(id)
+    val accent = MaterialTheme.colorScheme.primary
+    OutlinedButton(
+        onClick = { if (state == DownloadState.None) app.offline.download(kind, id, name, coverArt, songs) else app.offline.remove(id) },
+        enabled = songs.isNotEmpty() || state != DownloadState.None,
+        shape = RoundedCornerShape(24.dp),
+        modifier = Modifier.height(44.dp),
+    ) {
+        when (state) {
+            DownloadState.None -> Icon(Icons.Rounded.Download, null)
+            DownloadState.Done -> Icon(Icons.Rounded.DownloadDone, null, tint = accent)
+            else -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        }
+        Text(
+            when (state) {
+                DownloadState.None -> "Herunterladen"
+                DownloadState.Done -> "Heruntergeladen"
+                else -> "Wird geladen …"
+            },
+            color = if (state == DownloadState.Done) accent else Navi.Text,
+            modifier = Modifier.padding(start = 6.dp),
+        )
+    }
 }
 
 @Composable
 fun AlbumScreen(app: DesktopApp, id: String) {
-    val album = rememberLoad("album:$id") { app.client.album(id) }
+    val album = rememberLoad("album:$id:${app.version}") {
+        offlineFallback(app, id, { app.client.album(id) }) { c -> Album(id = id, name = c.name, artist = c.songs.mapNotNull { it.artist }.distinct().singleOrNull(), coverArt = c.coverArt, song = c.songs) }
+    }
     LoadBox(album) { a ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
             item {
@@ -690,6 +756,10 @@ fun AlbumScreen(app: DesktopApp, id: String) {
                     listOfNotNull("${a.song.size} Titel", totalTime(a.song)).joinToString(" · "),
                     a.song,
                     onSubtitle = a.artistId?.let { aid -> { app.nav.go(Screen.ArtistPage(aid)) } },
+                    actions = {
+                        DownloadToggle(app, "album", a.id, a.name, a.coverArt, a.song)
+                        AlbumMoreButton(app, a) { if (app.nav.current == Screen.AlbumPage(a.id)) app.nav.back() }
+                    },
                 )
             }
             songList(app, a.song, showCover = false)
@@ -699,12 +769,23 @@ fun AlbumScreen(app: DesktopApp, id: String) {
 
 @Composable
 fun PlaylistScreen(app: DesktopApp, id: String) {
-    val pl = rememberLoad("playlist:$id") { app.client.playlist(id) }
+    val pl = rememberLoad("playlist:$id:${app.version}") {
+        offlineFallback(app, id, { app.client.playlist(id) }) { c -> Playlist(id = id, name = c.name, coverArt = c.coverArt, entry = c.songs) }
+    }
     LoadBox(pl) { p ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
             item {
-                Header(app, app.client.coverArtUrl(p.coverArt, 600), "PLAYLIST", p.name, p.comment?.takeIf { it.isNotBlank() } ?: p.owner,
-                    listOfNotNull("${p.entry.size} Titel", totalTime(p.entry)).joinToString(" · "), p.entry)
+                Header(
+                    app, app.client.coverArtUrl(p.coverArt, 600), "PLAYLIST", p.name, p.comment?.takeIf { it.isNotBlank() } ?: p.owner,
+                    listOfNotNull("${p.entry.size} Titel", totalTime(p.entry)).joinToString(" · "), p.entry,
+                    actions = {
+                        DownloadToggle(app, "playlist", p.id, p.name, p.coverArt, p.entry)
+                        OutlinedButton(onClick = { app.nav.go(Screen.PlaylistEdit(p.id)) }, shape = RoundedCornerShape(24.dp), modifier = Modifier.height(44.dp)) {
+                            Icon(Icons.Rounded.Edit, null)
+                            Text("Bearbeiten", modifier = Modifier.padding(start = 6.dp))
+                        }
+                    },
+                )
             }
             songList(app, p.entry, showCover = true)
         }
@@ -713,16 +794,22 @@ fun PlaylistScreen(app: DesktopApp, id: String) {
 
 @Composable
 fun MixScreen(app: DesktopApp, id: String) {
-    val mix = rememberLoad("mix:$id") { app.mixes.mix(id) ?: app.mixes.mixes().first { it.id == id } }
+    val mix = rememberLoad("mix:$id") {
+        offlineFallback(app, id, { app.mixes.mix(id) ?: app.mixes.mixes().first { it.id == id } }) { c -> Mix(id, c.name, "Offline gespeichert", c.songs, 0.6f) }
+    }
     LoadBox(mix) { m ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
             item {
-                Header(app, null, "MIX · TÄGLICH NEU", m.name, m.description, listOfNotNull("${m.songs.size} Titel", totalTime(m.songs)).joinToString(" · "), m.songs, tile = {
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(mixColor(m.hue, 0.34f), mixColor(m.hue, 0.18f))))) {
-                        Text("MIX", style = MaterialTheme.typography.labelSmall, color = Color.White, modifier = Modifier.padding(14.dp))
-                        Text(m.name, style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 3, modifier = Modifier.align(Alignment.BottomStart).padding(14.dp))
-                    }
-                })
+                Header(
+                    app, null, "MIX · TÄGLICH NEU", m.name, m.description, listOfNotNull("${m.songs.size} Titel", totalTime(m.songs)).joinToString(" · "), m.songs,
+                    tile = {
+                        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(mixColor(m.hue, 0.34f), mixColor(m.hue, 0.18f))))) {
+                            Text("MIX", style = MaterialTheme.typography.labelSmall, color = Color.White, modifier = Modifier.padding(14.dp))
+                            Text(m.name, style = MaterialTheme.typography.headlineSmall, color = Color.White, maxLines = 3, modifier = Modifier.align(Alignment.BottomStart).padding(14.dp))
+                        }
+                    },
+                    actions = { DownloadToggle(app, "mix", m.id, m.name, null, m.songs) },
+                )
             }
             songList(app, m.songs, showCover = true)
         }
@@ -731,7 +818,7 @@ fun MixScreen(app: DesktopApp, id: String) {
 
 @Composable
 fun ArtistScreen(app: DesktopApp, id: String) {
-    val artist = rememberLoad("artist:$id") { app.client.artist(id) }
+    val artist = rememberLoad("artist:$id:${app.version}") { app.client.artist(id) }
     LoadBox(artist) { a ->
         LazyVerticalGrid(GridCells.Adaptive(190.dp), contentPadding = PaddingValues(start = 26.dp, end = 26.dp, bottom = 16.dp), modifier = Modifier.fillMaxSize().background(accentBrush())) {
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -757,8 +844,68 @@ fun ArtistScreen(app: DesktopApp, id: String) {
                     }
                 }
             }
+            if (app.helper.configured) item(span = { GridItemSpan(maxLineSpan) }) { ArtistYoutubeSection(app, a.name) }
             item(span = { GridItemSpan(maxLineSpan) }) { SectionTitle("Alben", Modifier.padding(start = 10.dp, top = 8.dp)) }
-            items(a.album.sortedByDescending { it.year ?: 0 }, key = { it.id }) { al -> AlbumTile(app, al) { app.nav.go(Screen.AlbumPage(al.id)) } }
+            items(a.album.sortedByDescending { it.year ?: 0 }, key = { it.id }) { al -> AlbumCard(app, al) }
+        }
+    }
+}
+
+/** Ausgeblendete YouTube-Veröffentlichungen (bis zum nächsten Laden). */
+private val hiddenYoutube = mutableStateMapOf<String, Boolean>()
+
+/** „Neu auf YouTube“: Veröffentlichungen des offiziellen Kanals, die noch nicht in der Bibliothek sind. */
+@Composable
+private fun ArtistYoutubeSection(app: DesktopApp, artist: String) {
+    val load = rememberLoad("yt-artist:$artist:${app.version}") { app.helper.youtubeReleases(artist).items }
+    val items = (load.first as? Load.Ok)?.value.orEmpty().filter { hiddenYoutube[it.key] != true }
+    if (items.isEmpty()) return
+    val accent = MaterialTheme.colorScheme.primary
+    Column(Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "YouTube", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold), color = Color.White,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFFE53935)).padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+            Text("Neu auf YouTube", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.ExtraBold))
+            Text("noch nicht in deiner Bibliothek", style = MaterialTheme.typography.bodySmall, color = Navi.Muted)
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            items(items, key = { it.key }) { r: YtRelease ->
+                val key = "yt:${r.key}"
+                val state = requestState[key]
+                Column(
+                    Modifier.width(200.dp).clip(RoundedCornerShape(14.dp)).background(Color.White.copy(alpha = 0.05f)).padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Cover(r.cover, Modifier.fillMaxWidth().aspectRatio(1f), 10)
+                    Text(r.title, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(r.artistLine ?: r.artist, style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Button(
+                            onClick = { runRequest(key) { app.helper.importYoutubeRelease(r.key) } },
+                            enabled = state == null, shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(horizontal = 10.dp),
+                            modifier = Modifier.weight(1f).height(32.dp),
+                        ) {
+                            when (state) {
+                                false -> CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                true -> Text("Wird geladen", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold))
+                                null -> Text("Importieren", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold))
+                            }
+                        }
+                        if (state == null) OutlinedButton(
+                            onClick = {
+                                hiddenYoutube[r.key] = true
+                                MainScope().launch { runCatching { app.helper.dismissYoutubeRelease(r.key) } }
+                            },
+                            shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(horizontal = 12.dp), modifier = Modifier.height(32.dp),
+                        ) { Text("Ausblenden", style = MaterialTheme.typography.labelMedium, color = Navi.Text) }
+                    }
+                }
+            }
+        }
+        if (requestState.any { (k, v) -> v && items.any { "yt:${it.key}" == k } }) {
+            Text("Import läuft – der Fortschritt steht unter „Anfragen“.", style = MaterialTheme.typography.bodySmall, color = accent)
         }
     }
 }
