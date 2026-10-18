@@ -43,7 +43,7 @@ import suggestions
 import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.11.0"
+VERSION = "1.12.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -930,9 +930,30 @@ def plugin_daylist(req: PluginDaylistRequest) -> dict:
         raise HTTPException(400, "Kein Claude-Worker eingerichtet (CLAUDE_WORKER)")
     import datetime as _dt
     m = ai.day_moment(_dt.datetime.now())
-    songs = [{k: v for k, v in s.model_dump().items() if v is not None} for s in req.songs]
-    result = _daylist_for(req.user, m["slotKey"], m["prompt"], req.count, songs=songs)
-    return {**result, "start": m["start"], "end": m["end"]}
+    user = req.user.strip().lower()
+    cached = (_read_json(DAYLIST_FILE, {}).get(user) or {}).get(m["slotKey"])
+    if cached:
+        return {**cached, "start": m["start"], "end": m["end"], "pending": False}
+    # Claude braucht länger, als Navidrome einem Plugin-Aufruf Zeit gibt: im Hintergrund erstellen,
+    # das Plugin fragt ein paar Minuten später noch einmal nach.
+    key = f"{user}|{m['slotKey']}"
+    if key not in _plugin_daylist_running:
+        _plugin_daylist_running.add(key)
+        songs = [{k: v for k, v in s.model_dump().items() if v is not None} for s in req.songs]
+
+        def run() -> None:
+            try:
+                _daylist_for(req.user, m["slotKey"], m["prompt"], req.count, songs=songs)
+            except Exception as e:  # noqa: BLE001
+                log.warning("Daylist für das Plugin fehlgeschlagen: %s", e)
+            finally:
+                _plugin_daylist_running.discard(key)
+
+        threading.Thread(target=run, daemon=True).start()
+    return {"pending": True, "slotKey": m["slotKey"], "start": m["start"], "end": m["end"]}
+
+
+_plugin_daylist_running: set[str] = set()
 
 
 @app.get("/api/plugin/artist-genres", dependencies=[Depends(require_token)])

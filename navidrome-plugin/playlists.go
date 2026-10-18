@@ -50,21 +50,40 @@ func (p *plugin) OnInit() error {
 }
 
 func (p *plugin) OnCallback(req scheduler.SchedulerCallbackRequest) error {
+	// Navidrome gibt jedem Aufruf nur ~30 Sekunden: Arbeit in getrennte Aufrufe aufteilen.
+	if req.Payload == "all" {
+		_, _ = host.SchedulerScheduleOneTime(1, "mixes", "navidroid-mixes-now")
+		_, _ = host.SchedulerScheduleOneTime(5, "daylist", "navidroid-daylist-now")
+		return nil
+	}
 	users, err := host.UsersGetUsers()
 	if err != nil {
 		return err
 	}
+	attempt := 0
+	if strings.HasPrefix(req.Payload, "daylist-retry-") {
+		fmt.Sscanf(strings.TrimPrefix(req.Payload, "daylist-retry-"), "%d", &attempt)
+	}
+	pending := false
 	for _, u := range users {
-		if req.Payload == "mixes" || req.Payload == "all" {
-			if err := updateMixes(u.UserName); err != nil {
+		switch {
+		case req.Payload == "mixes":
+			if n, err := updateMixes(u.UserName); err != nil {
 				pdk.Log(pdk.LogWarn, fmt.Sprintf("Mixe für %s: %v", u.UserName, err))
+			} else {
+				pdk.Log(pdk.LogInfo, fmt.Sprintf("Mixe für %s aktualisiert: %d Playlists", u.UserName, n))
 			}
-		}
-		if req.Payload == "daylist" || req.Payload == "all" {
-			if err := updateDaylist(u.UserName); err != nil {
+		case strings.HasPrefix(req.Payload, "daylist"):
+			waiting, err := updateDaylist(u.UserName)
+			if err != nil {
 				pdk.Log(pdk.LogWarn, fmt.Sprintf("Daylist für %s: %v", u.UserName, err))
 			}
+			pending = pending || waiting
 		}
+	}
+	// Claude stellt die Daylist im Helfer noch zusammen: später erneut abholen (höchstens 5-mal)
+	if pending && attempt < 5 {
+		_, _ = host.SchedulerScheduleOneTime(90, fmt.Sprintf("daylist-retry-%d", attempt+1), fmt.Sprintf("navidroid-daylist-retry-%d", attempt+1))
 	}
 	return nil
 }
@@ -213,10 +232,10 @@ func helperCall(method, path string, body any, timeoutMs int32, out any) error {
 
 // ---- Mixe ----
 
-func updateMixes(user string) error {
+func updateMixes(user string) (int, error) {
 	songs, err := librarySongs(user)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	genres := map[string][]string{}
 	hasTags := false
@@ -236,7 +255,7 @@ func updateMixes(user string) error {
 
 	existing, err := ownPlaylists(user)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	byName := map[string]playlistInfo{}
 	for _, p := range existing {
@@ -265,7 +284,7 @@ func updateMixes(user string) error {
 			deletePlaylist(user, p.ID)
 		}
 	}
-	return nil
+	return len(keep), nil
 }
 
 // ---- Daylist ----
@@ -277,47 +296,63 @@ type daylistResponse struct {
 	Tracks      []libSong `json:"tracks"`
 	SlotKey     string    `json:"slotKey"`
 	End         string    `json:"end"`
+	Pending     bool      `json:"pending"`
 }
 
-func updateDaylist(user string) error {
+// updateDaylist liefert true, solange der Helfer die Daylist noch erstellt.
+func updateDaylist(user string) (bool, error) {
 	if _, _, ok := helperConfig(); !ok {
-		return nil // ohne Helfer keine Daylist
+		return false, nil // ohne Helfer keine Daylist
+	}
+	existing, err := ownPlaylists(user)
+	if err != nil {
+		return false, err
+	}
+	var current []playlistInfo
+	for _, p := range existing {
+		if strings.HasPrefix(p.Comment, markDaylist) {
+			current = append(current, p)
+		}
 	}
 	songs, err := librarySongs(user)
 	if err != nil {
-		return err
+		return false, err
 	}
 	var d daylistResponse
 	body := map[string]any{"user": user, "songs": songs, "count": 40}
-	if err := helperCall("POST", "/api/plugin/daylist", body, 290000, &d); err != nil {
-		return err
+	if err := helperCall("POST", "/api/plugin/daylist", body, 20000, &d); err != nil {
+		return false, err
+	}
+	if d.Pending {
+		return true, nil
 	}
 	if len(d.Tracks) == 0 {
-		return errors.New("leere Daylist")
+		return false, errors.New("leere Daylist")
+	}
+	marker := markDaylist + " " + d.SlotKey
+	if len(current) == 1 && strings.HasPrefix(current[0].Comment, marker) {
+		return false, nil // schon aktuell
 	}
 	ids := make([]string, 0, len(d.Tracks))
 	for _, t := range d.Tracks {
 		ids = append(ids, t.ID)
 	}
-	existing, err := ownPlaylists(user)
-	if err != nil {
-		return err
-	}
 	prevID := ""
-	for _, p := range existing {
-		if strings.HasPrefix(p.Comment, markDaylist) {
-			if prevID == "" {
-				prevID = p.ID
-			} else {
-				deletePlaylist(user, p.ID) // es soll nur eine Daylist geben
-			}
+	for i, p := range current {
+		if i == 0 {
+			prevID = p.ID
+		} else {
+			deletePlaylist(user, p.ID) // es soll nur eine Daylist geben
 		}
 	}
 	tags := ""
 	for _, t := range d.Tags {
 		tags += " #" + t
 	}
-	comment := fmt.Sprintf("%s · bis %s · %s%s", markDaylist, d.End, d.Description, tags)
-	_, err = writePlaylist(user, prevID, "Daylist · "+d.Name, comment, ids)
-	return err
+	comment := fmt.Sprintf("%s · bis %s · %s%s", marker, d.End, d.Description, tags)
+	if _, err := writePlaylist(user, prevID, "Daylist · "+d.Name, comment, ids); err != nil {
+		return false, err
+	}
+	pdk.Log(pdk.LogInfo, fmt.Sprintf("Daylist für %s: %s", user, d.Name))
+	return false, nil
 }
