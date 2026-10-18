@@ -1,16 +1,63 @@
 {
   "name": "NaviDroid Extras",
   "author": "NaviDroid",
-  "version": "1.0.0",
-  "description": "Synchronisierte Songtexte von LRCLIB und ähnliche Titel über Deezer-Radio – für alle Apps, nicht nur NaviDroid.",
+  "version": "1.1.0",
+  "description": "Songtexte von LRCLIB, ähnliche Titel über Deezer-Radio sowie Daylist und tägliche Mixe als Navidrome-Playlists – für alle Apps.",
   "website": "https://github.com/ENjxzlt/navidroid",
   "permissions": {
     "http": {
-      "reason": "Songtexte von LRCLIB und ähnliche Titel von Deezer abrufen",
-      "requiredHosts": ["lrclib.net", "api.deezer.com"]
+      "reason": "Songtexte von LRCLIB, ähnliche Titel von Deezer und Daylist/Genres vom NaviDroid-Helfer im Heimnetz",
+      "requiredHosts": [
+        "lrclib.net",
+        "api.deezer.com",
+        "192.168.0.0/16",
+        "10.0.0.0/8",
+        "172.16.0.0/12"
+      ]
     },
     "cache": {
       "reason": "Antworten zwischenspeichern, damit LRCLIB und Deezer nicht unnötig oft gefragt werden"
+    },
+    "users": {
+      "reason": "Daylist und Mixe für die freigegebenen Benutzer anlegen"
+    },
+    "subsonicapi": {
+      "reason": "Bibliothek lesen und Playlists anlegen/aktualisieren"
+    },
+    "scheduler": {
+      "reason": "Daylist zu jedem Zeitfenster und Mixe jeden Morgen erneuern"
+    }
+  },
+  "config": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "helperUrl": {
+          "type": "string",
+          "title": "Adresse des NaviDroid-Helfers",
+          "description": "z. B. http://192.168.178.10:8787 – für Daylist (Claude) und Künstler-Genres"
+        },
+        "helperToken": {
+          "type": "string",
+          "title": "Helfer-Token"
+        }
+      }
+    },
+    "uiSchema": {
+      "type": "VerticalLayout",
+      "elements": [
+        {
+          "type": "Control",
+          "scope": "#/properties/helperUrl"
+        },
+        {
+          "type": "Control",
+          "scope": "#/properties/helperToken",
+          "options": {
+            "format": "password"
+          }
+        }
+      ]
     }
   }
 }

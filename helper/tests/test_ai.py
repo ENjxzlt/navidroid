@@ -44,6 +44,20 @@ class AiTest(unittest.TestCase):
         self.assertIn("old1", prompts[0])
         self.assertIn("Samstagmorgen, Wochenende", prompts[0])
 
+    def test_day_moment_matches_app(self):
+        import datetime as dt
+        m = ai.day_moment(dt.datetime(2026, 10, 18, 2, 0))  # Sonntag 2 Uhr → Samstagnacht
+        self.assertEqual(m["slotKey"], "2026-10-17-nacht")
+        self.assertTrue(m["prompt"].startswith("Samstagnacht (Wochenende)"))
+        self.assertEqual(ai.day_moment(dt.datetime(2026, 10, 19, 9, 0))["slotKey"], "2026-10-19-vormittag")
+        self.assertEqual(ai.day_moment(dt.datetime(2026, 10, 19, 7, 0))["end"], "09:00")
+
+    def test_daylist_with_given_songs(self):
+        with mock.patch.object(ai, "library", side_effect=AssertionError("darf nicht aufgerufen werden")), \
+                mock.patch.object(ai, "_ask_claude", return_value='{"name": "X", "trackIds": ["a"]}'):
+            res = ai.daylist(None, None, "Montagmorgen", {}, [], songs=[{"id": "a", "title": "T", "artist": "A"}])
+        self.assertEqual(res["tracks"][0]["id"], "a")
+
     def test_no_tools_for_claude(self):
         for t in ("Bash", "Write", "Read", "WebFetch", "mcp__*"):
             self.assertIn(t, ai.DISALLOWED_TOOLS)

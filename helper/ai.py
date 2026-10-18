@@ -222,8 +222,10 @@ def build_daylist_prompt(lines: list[str], moment: str, count: int, avoid: list[
     )
 
 
-def daylist(data_dir: Path, nav: dict, moment: str, artist_genres: dict[str, list[str]], avoid: list[str], count: int = 40) -> dict:
-    songs = with_artist_genres(library(nav), artist_genres)
+def daylist(data_dir: Path, nav: dict | None, moment: str, artist_genres: dict[str, list[str]], avoid: list[str], count: int = 40,
+            songs: list[dict] | None = None) -> dict:
+    """Bibliothek aus Navidrome lesen – oder die mitgeschickte Titelliste nehmen (Navidrome-Plugin)."""
+    songs = with_artist_genres(songs if songs is not None else library(nav or {}), artist_genres)
     if not songs:
         raise AiError("Die Bibliothek ist leer")
     songs = _sample(songs)
@@ -263,4 +265,39 @@ def create_playlist(data_dir: Path, nav: dict, wish: str, count: int, prefer_rar
         "description": str(answer.get("description") or "")[:300],
         "tracks": tracks,
         "missing": missing,
+    }
+
+
+# ---- Zeitfenster (wie in der App: DayMoment) ----
+
+WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+SLOTS = [  # key, label, start, end
+    ("frueher-morgen", "morgen", 5, 9),
+    ("vormittag", "vormittag", 9, 12),
+    ("nachmittag", "nachmittag", 12, 17),
+    ("abend", "abend", 17, 21),
+    ("nacht", "nacht", 21, 5),
+]
+
+
+def day_moment(now) -> dict:
+    """now: datetime in der Zeitzone des Servers. Nach Mitternacht zählt noch die Nacht des Vortags."""
+    import datetime as _dt
+    h = now.hour
+    date = now.date()
+    if h < 5:
+        date = date - _dt.timedelta(days=1)
+        slot = SLOTS[4]
+    elif h >= 21:
+        slot = SLOTS[4]
+    else:
+        slot = next(s for s in SLOTS if s[2] <= h < s[3])
+    key, label, start, end = slot
+    weekday = WEEKDAYS[date.weekday()]
+    weekend = date.weekday() >= 5
+    return {
+        "slotKey": f"{date.isoformat()}-{key}",
+        "prompt": f"{weekday}{label} ({'Wochenende' if weekend else 'Werktag'}), {start:02d}:00–{end:02d}:00 Uhr",
+        "start": f"{start:02d}:00",
+        "end": f"{end:02d}:00",
     }

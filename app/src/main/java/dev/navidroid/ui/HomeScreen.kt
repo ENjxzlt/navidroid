@@ -355,7 +355,9 @@ private fun PlaylistsList(app: NaviApp, nav: NavController) {
         }
     }
 
-    LoadContent(loader) { playlists ->
+    LoadContent(loader) { all ->
+        // Daylist und Mixe vom Navidrome-Plugin stehen schon auf der Startseite
+        val playlists = all.filterNot { dev.navidroid.data.MixRepository.isPluginPlaylist(it.comment) }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
             item {
                 Row(

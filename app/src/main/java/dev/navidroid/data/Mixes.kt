@@ -42,10 +42,25 @@ class MixRepository(private val client: SubsonicClient?, private val artistGenre
     suspend fun mixes(force: Boolean = false): List<Mix> {
         val today = LocalDate.now()
         cached?.let { (day, list) -> if (!force && day == today) return list }
+        // Legt das Navidrome-Plugin „NaviDroid Extras“ die Mixe als Playlists an, gelten diese – dann sind sie in allen Apps gleich.
+        pluginMixes()?.let { cached = today to it; return it }
         val (songs, genres) = library(force)
         val result = build(songs, today, genres)
         cached = today to result
         return result
+    }
+
+    private suspend fun pluginMixes(): List<Mix>? {
+        val c = client ?: return null
+        val lists = runCatching { c.playlists() }.getOrNull()?.filter { it.comment?.startsWith(PLUGIN_MIX) == true }
+        if (lists.isNullOrEmpty()) return null
+        return lists
+            .sortedBy { if (it.name == "Lieblinge" || it.name == "Entdecken") 1 else 0 }
+            .mapNotNull { pl ->
+                val songs = runCatching { c.playlist(pl.id).entry }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                Mix("pl-${pl.id}", pl.name, pl.comment.orEmpty().substringAfter("täglich neu · ", ""), songs, hueOf(pl.name))
+            }
+            .takeIf { it.isNotEmpty() }
     }
 
     internal fun build(songs: List<Song>, day: LocalDate, artistGenres: Map<String, List<String>>): List<Mix> {
@@ -134,6 +149,12 @@ class MixRepository(private val client: SubsonicClient?, private val artistGenre
     private fun hueOf(key: String) = (key.hashCode().absoluteValue % 360) / 360f
 
     companion object {
+        /** Kommentar-Kennung der Playlists vom Navidrome-Plugin. */
+        const val PLUGIN_MIX = "NaviDroid-Mix"
+        const val PLUGIN_DAYLIST = "NaviDroid-Daylist"
+
+        fun isPluginPlaylist(comment: String?) = comment?.startsWith(PLUGIN_MIX) == true || comment?.startsWith(PLUGIN_DAYLIST) == true
+
         fun genresOf(s: Song, artistGenres: Map<String, List<String>>): List<String> {
             val own = (s.genre ?: "").split(';', '/', ',').map { it.trim() }.filter { it.isNotEmpty() }
             if (own.isNotEmpty()) return own

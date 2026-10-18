@@ -56,3 +56,29 @@ func TestMixTracks(t *testing.T) {
 		t.Fatal("gleicher Künstler hintereinander")
 	}
 }
+
+func TestBuildMixes(t *testing.T) {
+	var songs []libSong
+	for i := 0; i < 60; i++ {
+		g := "Indie"
+		if i >= 40 {
+			g = "Jazz"
+		}
+		songs = append(songs, libSong{ID: string(rune('a'+i%26)) + string(rune('A'+i/26)), Title: "T", Artist: "A" + string(rune('0'+i%7)), Genre: g})
+	}
+	m := buildMixes(songs, 20000, nil)
+	if len(m) < 2 || m[0].Name != "Indie Mix" {
+		t.Fatalf("%+v", m)
+	}
+	if len(m[0].Songs) != 30 {
+		t.Fatalf("len %d", len(m[0].Songs))
+	}
+	again := buildMixes(songs, 20000, nil)
+	if again[0].Songs[0].ID != m[0].Songs[0].ID {
+		t.Fatal("gleicher Tag sollte gleichen Mix ergeben")
+	}
+	last := m[len(m)-1]
+	if last.ID != "discover" {
+		t.Fatalf("Entdecken fehlt: %s", last.ID)
+	}
+}

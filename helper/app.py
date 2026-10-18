@@ -43,7 +43,7 @@ import suggestions
 import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.10.0"
+VERSION = "1.11.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -875,28 +875,69 @@ def ai_daylist(req: DaylistRequest) -> dict:
     """Daylist je Zeitfenster; einmal erstellt, bekommen alle Anfragen im selben Fenster dieselbe Liste."""
     if not ai.configured():
         raise HTTPException(400, "Für die Daylist ist im Helfer kein Claude-Worker eingerichtet (CLAUDE_WORKER)")
-    user = f"{req.navidrome.url.rstrip('/')}|{req.navidrome.user}"
+    return _daylist_for(req.navidrome.user, req.slotKey, req.moment, req.count, nav=req.navidrome.model_dump())
+
+
+def _daylist_for(username: str, slot_key: str, moment: str, count: int, nav: dict | None = None, songs: list[dict] | None = None) -> dict:
+    """Gemeinsamer Speicher für App und Navidrome-Plugin: gleiche Daylist pro Benutzer und Zeitfenster."""
+    user = username.strip().lower()
     with _daylist_lock:
         try:
             store = json.loads(DAYLIST_FILE.read_text())
         except (OSError, ValueError):
             store = {}
         mine = store.get(user) or {}
-        if req.slotKey in mine:
-            return mine[req.slotKey]
-        day = req.slotKey.rsplit("-", 1)[0]
+        if slot_key in mine:
+            return mine[slot_key]
+        day = slot_key[:10]
         avoid = [t["id"] for key, d in mine.items() if key.startswith(day) for t in d.get("tracks", [])]
         try:
-            result = ai.daylist(DATA_DIR, req.navidrome.model_dump(), req.moment, artist_genres(), avoid, req.count)
+            result = ai.daylist(DATA_DIR, nav, moment, artist_genres(), avoid, count, songs=songs)
         except ai.AiError as e:
             raise HTTPException(502, str(e)) from e
-        result["slotKey"] = req.slotKey
-        mine[req.slotKey] = result
+        result["slotKey"] = slot_key
+        mine[slot_key] = result
         store[user] = dict(sorted(mine.items())[-12:])
         tmp = DAYLIST_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(store))
         tmp.replace(DAYLIST_FILE)
         return result
+
+
+class PluginSong(BaseModel):
+    id: str
+    title: str = ""
+    artist: str | None = None
+    album: str | None = None
+    albumId: str | None = None
+    coverArt: str | None = None
+    duration: int | None = None
+    year: int | None = None
+    genre: str | None = None
+    playCount: int | None = None
+
+
+class PluginDaylistRequest(BaseModel):
+    user: str
+    songs: list[PluginSong]
+    count: int = 40
+
+
+@app.post("/api/plugin/daylist", dependencies=[Depends(require_token)])
+def plugin_daylist(req: PluginDaylistRequest) -> dict:
+    """Für das Navidrome-Plugin: Zeitfenster bestimmt der Helfer (Zeitzone des Servers)."""
+    if not ai.configured():
+        raise HTTPException(400, "Kein Claude-Worker eingerichtet (CLAUDE_WORKER)")
+    import datetime as _dt
+    m = ai.day_moment(_dt.datetime.now())
+    songs = [{k: v for k, v in s.model_dump().items() if v is not None} for s in req.songs]
+    result = _daylist_for(req.user, m["slotKey"], m["prompt"], req.count, songs=songs)
+    return {**result, "start": m["start"], "end": m["end"]}
+
+
+@app.get("/api/plugin/artist-genres", dependencies=[Depends(require_token)])
+def plugin_artist_genres() -> dict:
+    return artist_genres()
 
 
 class ManualPreviewRequest(BaseModel):
