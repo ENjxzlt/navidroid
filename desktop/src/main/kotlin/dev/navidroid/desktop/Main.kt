@@ -148,8 +148,15 @@ class DesktopApp {
         val user = session.current?.username ?: return
         if (!helper.configured) return
         val (remote, ts) = runCatching { helper.getSettings(user) }.getOrNull() ?: return
-        if (!pushLocal && ts > settings.syncedAt) {
-            dev.navidroid.lidarr.SyncFormat.lidarr(remote["lidarr"] as? kotlinx.serialization.json.JsonObject)?.let { lidarrStore.save(it) }
+        // Fehlender Lidarr-Zugang wird immer vom Handy übernommen, auch wenn der Stand schon als abgeglichen gilt.
+        val remoteLidarr = dev.navidroid.lidarr.SyncFormat.lidarr(remote["lidarr"] as? kotlinx.serialization.json.JsonObject)
+        if (lidarrStore.config == null && remoteLidarr != null) {
+            lidarrStore.save(remoteLidarr)
+            version++
+        }
+        val pulled = ts > settings.syncedAt
+        if (pulled) {
+            remoteLidarr?.let { lidarrStore.save(it) }
             with(dev.navidroid.lidarr.SyncFormat) {
                 updateSettings(settings.copy(
                     onlineLyrics = remote.bool("onlineLyrics") ?: settings.onlineLyrics,
@@ -158,7 +165,8 @@ class DesktopApp {
                 ))
             }
             version++
-        } else {
+        }
+        if (pushLocal || !pulled) {
             val now = System.currentTimeMillis()
             val data = kotlinx.serialization.json.buildJsonObject {
                 remote.forEach { (k, v) -> put(k, v) }
