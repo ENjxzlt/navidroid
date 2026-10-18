@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,6 +72,31 @@ fun LyricsScreen(app: NaviApp, onClose: () -> Unit) {
     val soft = mutedOn(tint)
 
     var lyrics by remember { mutableStateOf<Load<Lyrics?>>(Load.Loading) }
+    // Übersetzung ins Deutsche (Claude über den Helfer)
+    var translate by remember { mutableStateOf(false) }
+    var translation by remember(s.mediaId) { mutableStateOf<List<String>?>(null) }
+    var translating by remember(s.mediaId) { mutableStateOf(false) }
+    val tContext = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(translate, s.mediaId, (lyrics as? Load.Ok)?.value) {
+        val l = (lyrics as? Load.Ok)?.value ?: return@LaunchedEffect
+        val id = s.mediaId ?: return@LaunchedEffect
+        if (!translate || translation != null) return@LaunchedEffect
+        translating = true
+        try {
+            val r = app.helper.translateLyrics(id, s.artist.orEmpty(), s.title, l.lines.map { it.text })
+            if (r.language == "de" || r.lines.isEmpty()) {
+                android.widget.Toast.makeText(tContext, "Der Songtext ist schon auf Deutsch", android.widget.Toast.LENGTH_SHORT).show()
+                translate = false
+            } else translation = r.lines
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(tContext, e.message ?: "Übersetzung fehlgeschlagen", android.widget.Toast.LENGTH_SHORT).show()
+            translate = false
+        } finally {
+            translating = false
+        }
+    }
     LaunchedEffect(s.mediaId) {
         val id = s.mediaId ?: return@LaunchedEffect
         lyrics = Load.Loading
@@ -88,6 +114,16 @@ fun LyricsScreen(app: NaviApp, onClose: () -> Unit) {
                 Text(s.title, style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.ExtraBold), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(s.artist.orEmpty(), style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+            if (app.helper.configured && (lyrics as? Load.Ok)?.value != null) {
+                Box(contentAlignment = Alignment.Center) {
+                    RoundIconButton(
+                        Icons.Rounded.Translate, if (translate) "Übersetzung ausblenden" else "Ins Deutsche übersetzen",
+                        { translate = !translate },
+                        container = if (translate) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.08f),
+                    )
+                    if (translating) androidx.compose.material3.CircularProgressIndicator(Modifier.size(44.dp), strokeWidth = 2.dp, color = Color.White)
+                }
+            }
             RoundIconButton(Icons.Rounded.KeyboardArrowDown, "Songtext schließen", onClose, container = Color.White.copy(alpha = 0.08f))
         }
 
@@ -97,8 +133,8 @@ fun LyricsScreen(app: NaviApp, onClose: () -> Unit) {
                 is Load.Err -> EmptyHint(l.message)
                 is Load.Ok -> when {
                     l.value == null -> NoLyrics(app, soft)
-                    l.value.synced -> SyncedLyrics(l.value, tint)
-                    else -> PlainLyrics(l.value, soft)
+                    l.value.synced -> SyncedLyrics(l.value, tint, translation.takeIf { translate })
+                    else -> PlainLyrics(l.value, soft, translation.takeIf { translate })
                 }
             }
         }
@@ -141,17 +177,20 @@ private fun NoLyrics(app: NaviApp, soft: Color) {
 }
 
 @Composable
-private fun PlainLyrics(lyrics: Lyrics, soft: Color) {
+private fun PlainLyrics(lyrics: Lyrics, soft: Color, translation: List<String>?) {
     LazyColumn(contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp)) {
         item {
             Text("Nicht synchronisiert", style = MaterialTheme.typography.labelSmall, color = soft, modifier = Modifier.padding(bottom = 12.dp))
         }
-        itemsIndexed(lyrics.lines) { _, line ->
+        itemsIndexed(lyrics.lines) { i, line ->
             Text(
                 line.text.ifEmpty { " " },
                 style = LyricStyle.copy(fontSize = 24.sp, lineHeight = 32.sp),
                 color = Color.White.copy(alpha = 0.85f),
             )
+            translation?.getOrNull(i)?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.bodyLarge, color = soft, modifier = Modifier.padding(bottom = 8.dp))
+            }
         }
         item { SourceNote(lyrics, soft) }
     }
@@ -172,7 +211,7 @@ private fun SourceNote(lyrics: Lyrics, soft: Color) {
  * das gerade gesungene Wort leuchtet in der Akzentfarbe. Tippen auf eine Zeile springt dorthin.
  */
 @Composable
-private fun SyncedLyrics(lyrics: Lyrics, tint: Color) {
+private fun SyncedLyrics(lyrics: Lyrics, tint: Color, translation: List<String>?) {
     val player = LocalPlayer.current
     val accent = MaterialTheme.colorScheme.primary
     val listState = rememberLazyListState()
@@ -215,6 +254,7 @@ private fun SyncedLyrics(lyrics: Lyrics, tint: Color) {
                 positionMs = if (i == current) position else 0L,
                 accent = accent,
                 onClick = { player.seekTo(line.startMs) },
+                translation = translation?.getOrNull(i),
             )
         }
         item { Box(Modifier.padding(horizontal = 24.dp)) { SourceNote(lyrics, mutedOn(tint)) } }
@@ -224,7 +264,7 @@ private fun SyncedLyrics(lyrics: Lyrics, tint: Color) {
 private enum class LineState { Past, Active, Upcoming }
 
 @Composable
-private fun LyricLineView(line: LyricLine, state: LineState, positionMs: Long, accent: Color, onClick: () -> Unit) {
+private fun LyricLineView(line: LyricLine, state: LineState, positionMs: Long, accent: Color, onClick: () -> Unit, translation: String? = null) {
     val scale by animateFloatAsState(if (state == LineState.Active) 1f else 0.94f, label = "lineScale")
     val text: AnnotatedString = if (state == LineState.Active && line.words.isNotEmpty()) {
         buildAnnotatedString {
@@ -246,11 +286,8 @@ private fun LyricLineView(line: LyricLine, state: LineState, positionMs: Long, a
         LineState.Active -> Color.White
         LineState.Upcoming -> Color.White.copy(alpha = 0.32f)
     }
-    Text(
-        text = text,
-        style = LyricStyle,
-        color = baseColor,
-        modifier = Modifier
+    Column(
+        Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(horizontal = 24.dp, vertical = 11.dp)
@@ -259,6 +296,11 @@ private fun LyricLineView(line: LyricLine, state: LineState, positionMs: Long, a
                 scaleY = scale
                 transformOrigin = TransformOrigin(0f, 0.5f)
             },
-    )
+    ) {
+        Text(text = text, style = LyricStyle, color = baseColor)
+        if (!translation.isNullOrBlank()) {
+            Text(translation, style = MaterialTheme.typography.titleMedium, color = baseColor.copy(alpha = baseColor.alpha * 0.75f), modifier = Modifier.padding(top = 4.dp))
+        }
+    }
 }
 

@@ -60,7 +60,10 @@ class NaviApp : Application(), ImageLoaderFactory {
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         lyrics = LyricsRepository(http, client, filesDir, { prefs.getBoolean("lrclib", true) }, { prefs.edit().putBoolean("lrclib", it).apply() })
         covers = CoverFallback(client, http)
-        mixes = MixRepository(client) { helper.artistGenres() }
+        mixes = MixRepository(client, { helper.artistGenres() }) {
+            val user = session.current?.username
+            if (user != null && helper.configured) helper.historySummary(user).counts else emptyMap()
+        }
         lidarrStore = LidarrStore(this)
         lidarr = LidarrClient(http, lidarrStore)
         helperStore = HelperStore(this)

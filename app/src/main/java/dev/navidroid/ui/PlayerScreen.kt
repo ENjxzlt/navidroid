@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Bedtime
 import dev.navidroid.playback.SleepTimer
 import androidx.compose.material3.DropdownMenuItem
@@ -209,6 +210,8 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
     val app = LocalContext.current.applicationContext as NaviApp
     val context = LocalContext.current
     if (sleepDialog) SleepTimerDialog { sleepDialog = false }
+    var infoDialog by remember { mutableStateOf(false) }
+    if (infoDialog) SongInfoDialog(app, s.artist.orEmpty(), s.title, s.album) { infoDialog = false }
 
     // Musikvideo vom YouTube-Helfer (optional, in den Lidarr-Einstellungen aktivierbar)
     var videoUrl by remember { mutableStateOf<String?>(null) }
@@ -256,6 +259,13 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
                                     context,
                                 )
                             },
+                        )
+                    }
+                    if (app.helper.configured && s.hasItem) {
+                        DropdownMenuItem(
+                            text = { Text("Über diesen Song") },
+                            leadingIcon = { Icon(Icons.Rounded.Info, null) },
+                            onClick = { menu = false; infoDialog = true },
                         )
                     }
                     DropdownMenuItem(

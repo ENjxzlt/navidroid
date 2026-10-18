@@ -65,3 +65,16 @@ class AiTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SongInfoTranslateTest(unittest.TestCase):
+    def test_translate_keeps_line_count(self):
+        with mock.patch.object(ai, "_ask_claude", return_value='{"language": "en", "lines": ["Hallo", "Welt"]}'):
+            r = ai.translate_lyrics(None, "A", "T", ["Hello", "World", "again"])
+        self.assertEqual(r["lines"], ["Hallo", "Welt", ""])
+
+    def test_song_info(self):
+        with mock.patch.object(ai, "_ask_claude", return_value='{"summary": "S", "facts": ["a", "b"], "known": true}') as m:
+            r = ai.song_info(None, "Frank Ocean", "Ivy", "Blonde", 2016)
+        self.assertEqual(r["facts"], ["a", "b"])
+        self.assertIn("Erfinde nichts", m.call_args.kwargs["system"])

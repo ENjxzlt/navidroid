@@ -82,7 +82,13 @@ fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit, o
     var filter by rememberSaveable { mutableStateOf(HomeFilter.All) }
     val data = rememberLoad("home:${PlaylistBus.version}:${LibraryBus.version}") {
         coroutineScope {
-            val recent = async { app.client.albumList("recent", 12, 0) }
+            // „Zuletzt gespielt“ aus dem eigenen Hörverlauf; Navidrome zählt hier nicht mit
+            val recent = async {
+                val user = app.session.current?.username
+                val own = if (user != null && app.helper.configured) runCatching { app.helper.historySummary(user).recentAlbums }.getOrDefault(emptyList()) else emptyList()
+                own.take(12).map { Album(id = it.id, name = it.name.orEmpty(), artist = it.artist, coverArt = it.coverArt) }
+                    .ifEmpty { app.client.albumList("recent", 12, 0) }
+            }
             val newest = async { app.client.albumList("newest", 12, 0) }
             val all = async { runCatching { app.client.albumList("alphabeticalByName", 500, 0) }.getOrDefault(emptyList()) }
             val playlists = async { runCatching { app.client.playlists() }.getOrDefault(emptyList()) }

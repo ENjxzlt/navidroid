@@ -391,3 +391,111 @@ def albums_without_cover(index: Index) -> list[dict]:
         first = files[0]
         out.append({"artist": first["albumartist"] or first["artist"], "album": first["album"], "files": files})
     return out
+
+
+# ---- Doppelte Alben ----
+
+_EDITION = re.compile(
+    r"[\(\[][^\)\]]*\b(deluxe|edition|remaster(ed)?|expanded|anniversary|bonus|version|explicit|clean|special|collector'?s?)\b[^\)\]]*[\)\]]",
+    re.I,
+)
+
+
+def base_title(album: str) -> str:
+    return norm(_EDITION.sub(" ", album or ""))
+
+
+_DISC_DIR = re.compile(r"^(cd|disc|disk|dvd|sacd|cassette|digital media|(\d+\W*)?vinyl|\d+\W*\"?\s*vinyl|lp)\s*\d+$", re.I)
+
+
+def album_folder(path: str) -> Path:
+    """Ordner des Albums; Unterordner pro CD/Vinylseite (Lidarr: „CD 01“, „12\" Vinyl 02“) zählen zum Album."""
+    folder = Path(path).parent
+    return folder.parent if _DISC_DIR.match(folder.name.strip()) else folder
+
+
+def duplicates(index: Index) -> list[dict]:
+    """
+    Gruppen von Alben desselben Künstlers mit gleichem Grundtitel (z. B. „Blonde“ und „Blonde (Deluxe)“
+    oder dasselbe Album zweimal aus Lidarr und YouTube). Jede Variante = Albumname + Ordner.
+    """
+    variants: dict[tuple[str, str, str], list[dict]] = {}
+    for f in index.files():
+        if not f["album"]:
+            continue
+        artist = norm(f["albumartist"] or f["artist"])
+        key = (artist, f["album"], str(album_folder(f["path"])))
+        variants.setdefault(key, []).append(f)
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for (artist, album, folder), files in variants.items():
+        exts = sorted({Path(x["path"]).suffix.lower().lstrip(".") for x in files})
+        size = sum(Path(x["path"]).stat().st_size for x in files if Path(x["path"]).exists())
+        v = {
+            "key": f"{album}|{folder}",
+            "album": album,
+            "artist": files[0]["albumartist"] or files[0]["artist"],
+            "folder": folder,
+            "tracks": len(files),
+            "formats": exts,
+            "bytes": size,
+            "titles": sorted({norm(x["title"]) for x in files}),
+        }
+        groups.setdefault((artist, base_title(album)), []).append(v)
+    out = []
+    for (artist, base), vs in groups.items():
+        if len(vs) < 2 or not base:
+            continue
+        # Mehr Titel, verlustfrei, Ordner mit Jahreszahl (Lidarr-Schema) zuerst
+        vs.sort(key=lambda v: (-v["tracks"], "flac" not in v["formats"], not re.search(r"\(\d{4}\)$", Path(v["folder"]).name), v["album"]))
+        all_titles = set().union(*[set(v["titles"]) for v in vs])
+        for v in vs:
+            v["missingTitles"] = len(all_titles - set(v["titles"]))
+            del v["titles"]
+        out.append({"key": f"{artist}|{base}", "artist": vs[0]["artist"], "title": vs[0]["album"], "variants": vs})
+    return sorted(out, key=lambda g: g["artist"].lower())
+
+
+def variant_files(index: Index, variant_key: str) -> list[dict]:
+    album, folder = variant_key.split("|", 1)
+    return [f for f in index.files() if f["album"] == album and str(album_folder(f["path"])) == folder]
+
+
+def merge_into(index: Index, trash: "Trash", keep_key: str, other_key: str) -> dict:
+    """
+    Führt eine Variante in die behaltene ein: Titel, die dort fehlen, werden in deren Ordner verschoben und
+    bekommen deren Albumnamen; Titel, die es dort schon gibt, kommen in den Papierkorb.
+    """
+    keep = variant_files(index, keep_key)
+    other = variant_files(index, other_key)
+    if not keep or not other:
+        raise LibraryError("Version nicht gefunden")
+    target_dir = album_folder(keep[0]["path"])
+    keep_album = keep[0]["album"]
+    keep_artist = keep[0]["albumartist"] or keep[0]["artist"]
+    have = {norm(f["title"]) for f in keep}
+    moved, dupes = [], []
+    for f in other:
+        if norm(f["title"]) in have:
+            dupes.append(f)
+            continue
+        src = Path(f["path"])
+        dst = target_dir / src.name
+        n = 2
+        while dst.exists():
+            dst = target_dir / f"{src.stem} ({n}){src.suffix}"
+            n += 1
+        shutil.move(str(src), str(dst))
+        write_tags(str(dst), {"album": keep_album, "albumartist": keep_artist})
+        moved.append(str(dst))
+        have.add(norm(f["title"]))
+    trashed = trash.delete(keep_artist, other[0]["album"], dupes) if dupes else None
+    # Leeren Ordner der zusammengeführten Variante (Cover-Reste) aufräumen
+    old = album_folder(other[0]["path"])
+    if old.exists() and old != target_dir and not any(p.suffix.lower() in AUDIO for p in old.rglob("*")):
+        rest = [{"path": str(p)} for p in old.rglob("*") if p.is_file()]
+        if rest:
+            trash.delete(keep_artist, other[0]["album"] + " (Reste)", rest)
+        elif not any(old.iterdir()):
+            old.rmdir()
+    index.forget([f["path"] for f in other] + moved)
+    return {"moved": len(moved), "trashed": len(dupes), "trashId": (trashed or {}).get("id")}

@@ -141,6 +141,8 @@ fun SettingsScreen(app: NaviApp, nav: NavController, onCheckUpdates: () -> Unit,
             if (app.helper.configured) {
                 Section("Bibliothek") {
                     ValueRow("Eigene Dateien hochladen", "MP3, FLAC, M4A … in deinen Musikordner", null) { nav.navigate(Routes.UPLOAD) }
+                    ValueRow("Doppelte Alben", "Zusammenführen, z. B. Deluxe und normale Version", null) { nav.navigate(Routes.DUPLICATES) }
+                    ValueRow("Qualität verbessern", "MP3-Alben finden und als FLAC holen", null) { nav.navigate(Routes.QUALITY) }
                     ValueRow("Papierkorb", "Gelöschte Alben 30 Tage lang wiederherstellen", null) { nav.navigate(Routes.TRASH) }
                 }
             }

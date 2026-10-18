@@ -39,11 +39,12 @@ import ai
 import library
 import ma
 import covers
+import history as history_mod
 import suggestions
 import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.13.0"
+VERSION = "1.16.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -892,7 +893,7 @@ def _daylist_for(username: str, slot_key: str, moment: str, count: int, nav: dic
         day = slot_key[:10]
         avoid = [t["id"] for key, d in mine.items() if key.startswith(day) for t in d.get("tracks", [])]
         try:
-            result = ai.daylist(DATA_DIR, nav, moment, artist_genres(), avoid, count, songs=songs)
+            result = ai.daylist(DATA_DIR, nav, moment, artist_genres(), avoid, count, songs=songs, play_counts=_history.counts(user))
         except ai.AiError as e:
             raise HTTPException(502, str(e)) from e
         result["slotKey"] = slot_key
@@ -959,6 +960,88 @@ _plugin_daylist_running: set[str] = set()
 @app.get("/api/plugin/artist-genres", dependencies=[Depends(require_token)])
 def plugin_artist_genres() -> dict:
     return artist_genres()
+
+
+# ---- Über diesen Song / Übersetzung (Claude) ----
+
+SONG_INFO_FILE = DATA_DIR / "song_info.json"
+TRANSLATIONS_FILE = DATA_DIR / "translations.json"
+_ai_cache_lock = threading.Lock()
+
+
+def _cached(file: Path, key: str, make) -> dict:
+    with _ai_cache_lock:
+        cache = _read_json(file, {})
+        if key in cache:
+            return cache[key]
+    result = make()
+    with _ai_cache_lock:
+        cache = _read_json(file, {})
+        cache[key] = result
+        tmp = file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(cache))
+        tmp.replace(file)
+    return result
+
+
+class SongInfoRequest(BaseModel):
+    artist: str
+    title: str
+    album: str | None = None
+    year: int | None = None
+
+
+@app.post("/api/ai/song-info", dependencies=[Depends(require_token)])
+def ai_song_info(req: SongInfoRequest) -> dict:
+    if not ai.configured():
+        raise HTTPException(400, "Kein Claude-Worker eingerichtet (CLAUDE_WORKER)")
+    key = f"{ytr.norm(req.artist)}|{ytr.norm(req.title)}"
+    try:
+        return _cached(SONG_INFO_FILE, key, lambda: ai.song_info(DATA_DIR, req.artist, req.title, req.album, req.year))
+    except ai.AiError as e:
+        raise HTTPException(502, str(e)) from e
+
+
+class TranslateRequest(BaseModel):
+    songId: str
+    artist: str = ""
+    title: str = ""
+    lines: list[str]
+
+
+@app.post("/api/ai/translate-lyrics", dependencies=[Depends(require_token)])
+def ai_translate(req: TranslateRequest) -> dict:
+    if not ai.configured():
+        raise HTTPException(400, "Kein Claude-Worker eingerichtet (CLAUDE_WORKER)")
+    if not req.lines or len(req.lines) > 400:
+        raise HTTPException(400, "Kein oder zu langer Songtext")
+    key = req.songId + "|" + hashlib.sha1("\n".join(req.lines).encode()).hexdigest()[:12]
+    try:
+        return _cached(TRANSLATIONS_FILE, key, lambda: ai.translate_lyrics(DATA_DIR, req.artist, req.title, req.lines))
+    except ai.AiError as e:
+        raise HTTPException(502, str(e)) from e
+
+
+# ---- Hörverlauf ----
+
+_history = history_mod.History(DATA_DIR / "history.db")
+
+
+class PlayRequest(BaseModel):
+    user: str
+    song: PluginSong
+    ts: int | None = None
+
+
+@app.post("/api/history/play", dependencies=[Depends(require_token)])
+def history_play(req: PlayRequest) -> dict:
+    _history.record(req.user, {k: v for k, v in req.song.model_dump().items() if v is not None}, req.ts)
+    return {"ok": True}
+
+
+@app.get("/api/history/summary", dependencies=[Depends(require_token)])
+def history_summary(user: str = Query(...)) -> dict:
+    return _history.summary(user)
 
 
 class ManualPreviewRequest(BaseModel):
@@ -1469,6 +1552,105 @@ def _fill_covers_daily() -> None:
 
 if MUSIC_DIR:
     threading.Thread(target=_fill_covers_daily, daemon=True).start()
+
+
+@app.get("/api/library/duplicates", dependencies=[Depends(require_token)])
+def library_duplicates() -> list[dict]:
+    return library.duplicates(_need_library())
+
+
+class ResolveDuplicates(BaseModel):
+    keep: str
+    remove: list[str]
+    unmonitor: bool = True
+    merge: bool = True  # fehlende Titel übernehmen statt die ganze Version zu löschen
+
+
+@app.post("/api/library/duplicates/resolve", dependencies=[Depends(require_token)])
+def library_resolve_duplicates(req: ResolveDuplicates) -> dict:
+    """Behält eine Variante; die anderen kommen in den Papierkorb (30 Tage wiederherstellbar)."""
+    index = _need_library()
+    if req.keep in req.remove:
+        raise HTTPException(400, "Die behaltene Version kann nicht gelöscht werden")
+    if not library.variant_files(index, req.keep):
+        raise HTTPException(404, "Die behaltene Version wurde nicht gefunden")
+    if req.merge:
+        results = []
+        for key in req.remove:
+            with _library_lock:
+                try:
+                    results.append(library.merge_into(index, _trash, req.keep, key))
+                except library.LibraryError as e:
+                    raise HTTPException(409, str(e)) from e
+        return {"merged": results}
+    trashed = []
+    for key in req.remove:
+        files = library.variant_files(index, key)
+        if not files:
+            continue
+        artist = files[0]["albumartist"] or files[0]["artist"]
+        with _library_lock:
+            r = _trash.delete(artist, files[0]["album"], files)
+        if req.unmonitor:
+            _unmonitor_in_lidarr(artist, files[0]["album"])
+        trashed.append({"album": files[0]["album"], "id": r["id"], "tracks": r["tracks"]})
+    return {"trashed": trashed}
+
+
+# ---- Qualität verbessern (Lidarr) ----
+
+LOSSY = ("mp3", "aac", "ogg", "opus", "wma", "lossy")
+
+
+@app.get("/api/library/quality", dependencies=[Depends(require_token)])
+def library_quality() -> dict:
+    """Alben, die in Lidarr nur verlustbehaftet vorliegen (MP3 usw.), schlechteste zuerst."""
+    artists = lidarr("GET", "artist") or []
+    names = {a["id"]: a["artistName"] for a in artists}
+    albums = {a["id"]: a for a in (lidarr("GET", "album") or [])}
+    by_album: dict[int, list[str]] = {}
+    for a in artists:
+        for f in lidarr("GET", "trackfile", params={"artistId": a["id"]}) or []:
+            by_album.setdefault(f["albumId"], []).append(f["quality"]["quality"]["name"])
+    out = []
+    for album_id, qualities in by_album.items():
+        if any(not any(x in q.lower() for x in LOSSY) for q in qualities):
+            continue  # mindestens eine verlustfreie Datei → nicht aufführen
+        al = albums.get(album_id) or {}
+        cover = next((i.get("remoteUrl") for i in al.get("images") or [] if i.get("coverType") == "cover"), None)
+        worst = sorted(set(qualities))[0]
+        out.append({"albumId": album_id, "title": al.get("title", ""), "artist": names.get(al.get("artistId"), ""),
+                    "year": (al.get("releaseDate") or "")[:4], "quality": worst, "tracks": len(qualities), "cover": cover})
+    profiles = lidarr("GET", "qualityprofile") or []
+    upgrades = any(p.get("upgradeAllowed") for p in profiles)
+    return {"albums": sorted(out, key=lambda a: (a["artist"].lower(), a["title"].lower())), "upgradesAllowed": upgrades}
+
+
+@app.get("/api/library/quality/{album_id}/releases", dependencies=[Depends(require_token)])
+def library_quality_releases(album_id: int) -> list[dict]:
+    """Interaktive Suche in Lidarr, nur verlustfreie Treffer."""
+    releases = lidarr("GET", "release", params={"albumId": album_id}) or []
+    out = []
+    for r in releases:
+        q = ((r.get("quality") or {}).get("quality") or {}).get("name", "")
+        if any(x in q.lower() for x in LOSSY) or not q:
+            continue
+        out.append({"guid": r["guid"], "indexerId": r["indexerId"], "title": r.get("title", ""), "quality": q,
+                    "size": r.get("size", 0), "seeders": r.get("seeders"), "indexer": r.get("indexer", ""),
+                    "rejections": r.get("rejections") or []})
+    out.sort(key=lambda r: (-(r["seeders"] or 0)))
+    return out[:12]
+
+
+class GrabRequest(BaseModel):
+    guid: str
+    indexerId: int
+
+
+@app.post("/api/library/quality/grab", dependencies=[Depends(require_token)])
+def library_quality_grab(req: GrabRequest) -> dict:
+    lidarr("POST", "release", json={"guid": req.guid, "indexerId": req.indexerId})
+    return {"ok": True}
 
 
 @app.get("/api/library/trash", dependencies=[Depends(require_token)])

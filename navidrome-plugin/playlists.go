@@ -257,6 +257,17 @@ func updateMixes(user string) (int, error) {
 			pdk.Log(pdk.LogInfo, "Künstler-Genres nicht verfügbar: "+err.Error())
 		}
 	}
+	// Eigener Hörverlauf aus dem Helfer: Navidrome zählt Wiedergaben hier nicht mit
+	var hist struct {
+		Counts map[string]int64 `json:"counts"`
+	}
+	if err := helperCall("GET", "/api/history/summary?user="+url.QueryEscape(user), nil, 20000, &hist); err == nil {
+		for i := range songs {
+			if n := hist.Counts[songs[i].ID]; n > songs[i].PlayCount {
+				songs[i].PlayCount = n
+			}
+		}
+	}
 	day := time.Now().Unix() / 86400
 	mixes := buildMixes(songs, day, genres)
 

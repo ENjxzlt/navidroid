@@ -69,7 +69,7 @@ class PlaybackService : MediaLibraryService() {
         session = MediaLibrarySession.Builder(this, player, AutoLibrary(app, scope))
             .setSessionActivity(openApp)
             .build()
-        Scrobbler(player, client, scope)
+        Scrobbler(player, client, scope) { item, ts -> recordHistory(app, item, ts) }
         LoudnessAndFade(player, app.settings, scope)
         Autoplay(player, app, scope)
         SleepTimer.attach(player, scope)
@@ -131,6 +131,7 @@ private class Scrobbler(
     private val player: Player,
     private val client: SubsonicClient,
     private val scope: CoroutineScope,
+    private val onPlayed: suspend (MediaItem, Long) -> Unit,
 ) : Player.Listener {
     private var currentId: String? = null
     private var submitted = false
@@ -159,10 +160,29 @@ private class Scrobbler(
             submitted = true
             val now = System.currentTimeMillis()
             send { client.scrobble(id, submission = true, timeMs = now) }
+            player.currentMediaItem?.let { item -> send { onPlayed(item, now) } }
         }
     }
 
     private fun send(block: suspend () -> Unit) {
         scope.launch { runCatching { block() } }
     }
+}
+
+/** Eigener Hörverlauf im Helfer (für Lieblinge, Mixe, Daylist und „Zuletzt gespielt“). */
+private suspend fun recordHistory(app: NaviApp, item: MediaItem, ts: Long) {
+    val user = app.session.current?.username ?: return
+    if (!app.helper.configured) return
+    val md = item.mediaMetadata
+    val song = dev.navidroid.data.Song(
+        id = item.mediaId,
+        title = md.title?.toString().orEmpty(),
+        artist = md.artist?.toString(),
+        album = md.albumTitle?.toString(),
+        albumId = md.extras?.getString(EXTRA_ALBUM_ID),
+        coverArt = md.extras?.getString(EXTRA_COVER_ART),
+        genre = md.extras?.getString(EXTRA_GENRE),
+        duration = ((md.durationMs ?: 0L) / 1000).toInt(),
+    )
+    runCatching { app.helper.recordPlay(user, song, ts) }
 }

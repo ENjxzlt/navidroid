@@ -181,6 +181,8 @@ fun NaviRoot(app: NaviApp) {
             composable(Routes.ALBUM_EDIT) { e -> AlbumEditScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.TRASH) { TrashScreen(app, nav) }
             composable(Routes.MIXES) { MixesFolderScreen(app, nav) }
+            composable(Routes.DUPLICATES) { DuplicatesScreen(app, nav) }
+            composable(Routes.QUALITY) { QualityScreen(app, nav) }
             composable(Routes.UPLOAD) { UploadScreen(app, nav) }
             composable(Routes.OFFLINE_COLLECTION) { e -> OfflineCollectionScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.LYRICS) { LyricsScreen(app, onClose = { nav.popBackStack() }) }

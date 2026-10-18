@@ -114,3 +114,52 @@ class MissingCoverTest(unittest.TestCase):
             self.assertEqual([m["album"] for m in missing], ["Ohne"])
             library.set_cover(idx, missing[0]["files"], b"\xff\xd8jpeg", "image/jpeg")
             self.assertEqual(library.albums_without_cover(library.Index(music)), [])
+
+
+class DuplicatesTest(unittest.TestCase):
+    def test_find_and_trash_variant(self):
+        with tempfile.TemporaryDirectory() as d:
+            music = Path(d) / "music"
+            data = Path(d) / "data"
+            data.mkdir()
+            make_audio(music / "Frank Ocean" / "Blonde (2016)" / "01 - Nikes.flac", {"title": "Nikes", "album": "Blonde", "album_artist": "Frank Ocean"})
+            make_audio(music / "Frank Ocean" / "Blonde (2016)" / "02 - Ivy.flac", {"title": "Ivy", "album": "Blonde", "album_artist": "Frank Ocean"})
+            make_audio(music / "Frank Ocean" / "Blonde (Deluxe)" / "01 - Nikes.mp3", {"title": "Nikes", "album": "Blonde (Deluxe Edition)", "album_artist": "Frank Ocean"})
+            make_audio(music / "Frank Ocean" / "Endless" / "01 - x.mp3", {"title": "x", "album": "Endless", "album_artist": "Frank Ocean"})
+            # Mehrteiliges Album: CD-Unterordner sind kein Duplikat
+            make_audio(music / "RHCP" / "Stadium Arcadium (2006)" / "CD 01" / "01 - a.flac", {"title": "a", "album": "Stadium Arcadium", "album_artist": "RHCP"})
+            make_audio(music / "RHCP" / "Stadium Arcadium (2006)" / "CD 02" / "01 - b.flac", {"title": "b", "album": "Stadium Arcadium", "album_artist": "RHCP"})
+            make_audio(music / "RHCP" / "By the Way (2002)" / "12\" Vinyl 01" / "01 - c.flac", {"title": "c", "album": "By the Way", "album_artist": "RHCP"})
+            make_audio(music / "RHCP" / "By the Way (2002)" / "12\" Vinyl 02" / "01 - d.flac", {"title": "d", "album": "By the Way", "album_artist": "RHCP"})
+            idx = library.Index(music)
+            groups = library.duplicates(idx)
+            self.assertEqual(len(groups), 1)
+            vs = groups[0]["variants"]
+            self.assertEqual(vs[0]["album"], "Blonde")  # mehr Titel, FLAC → zuerst
+            self.assertEqual(vs[1]["missingTitles"], 1)
+            trash = library.Trash(music, data, idx)
+            trash.delete("Frank Ocean", vs[1]["album"], library.variant_files(idx, vs[1]["key"]))
+            self.assertEqual(library.duplicates(library.Index(music)), [])
+
+
+class MergeTest(unittest.TestCase):
+    def test_merge_moves_missing_and_trashes_dupes(self):
+        with tempfile.TemporaryDirectory() as d:
+            music = Path(d) / "music"
+            data = Path(d) / "data"
+            data.mkdir()
+            make_audio(music / "Tiavo" / "Hotel Tiavo (2026)" / "01 - a.mp3", {"title": "A", "album": "Hotel Tiavo", "album_artist": "Tiavo"})
+            make_audio(music / "Tiavo" / "Hotel Tiavo (2026)" / "02 - b.mp3", {"title": "B", "album": "Hotel Tiavo", "album_artist": "Tiavo"})
+            make_audio(music / "Tiavo" / "Hotel Tiavo" / "01 - b.mp3", {"title": "B", "album": "Hotel Tiavo", "album_artist": "Tiavo"})
+            make_audio(music / "Tiavo" / "Hotel Tiavo" / "02 - c.mp3", {"title": "C", "album": "Hotel Tiavo", "album_artist": "Tiavo"})
+            (music / "Tiavo" / "Hotel Tiavo" / "cover.jpg").write_bytes(b"x")
+            idx = library.Index(music)
+            trash = library.Trash(music, data, idx)
+            g = library.duplicates(idx)[0]
+            keep, other = g["variants"][0]["key"], g["variants"][1]["key"]
+            r = library.merge_into(idx, trash, keep, other)
+            self.assertEqual((r["moved"], r["trashed"]), (1, 1))
+            self.assertFalse((music / "Tiavo" / "Hotel Tiavo").exists())
+            titles = sorted(f["title"] for f in library.Index(music).files())
+            self.assertEqual(titles, ["A", "B", "C"])
+            self.assertEqual(library.duplicates(library.Index(music)), [])

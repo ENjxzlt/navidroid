@@ -99,7 +99,7 @@ class DesktopApp {
     var settings by mutableStateOf(DesktopSettings.load())
     val client = SubsonicClient(http, session)
     val lyrics = LyricsRepository(http, client, Paths.cache, { settings.onlineLyrics }, { updateSettings(settings.copy(onlineLyrics = it)) })
-    val mixes = MixRepository(client) { emptyMap() }
+    val mixes = MixRepository(client, { emptyMap() })
     val player = DesktopPlayer(client) { settings }
     val nav = Nav()
     var loggedIn by mutableStateOf(session.current != null)

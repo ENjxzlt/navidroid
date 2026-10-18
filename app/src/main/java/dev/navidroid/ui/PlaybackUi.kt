@@ -3,6 +3,7 @@ package dev.navidroid.ui
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -98,3 +99,36 @@ fun SleepTimerDialog(onDismiss: () -> Unit) {
         confirmButton = { TextButton(onClick = onDismiss) { Text("Schließen") } },
     )
 }
+
+/** „Über diesen Song“: von Claude zusammengefasst, im Helfer zwischengespeichert. */
+@Composable
+fun SongInfoDialog(app: NaviApp, artist: String, title: String, album: String?, onDismiss: () -> Unit) {
+    val loader = rememberLoad("songinfo:$artist|$title") { app.helper.songInfo(artist, title, album) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Über „$title“") },
+        text = {
+            Column(Modifier.androidxVerticalScroll(), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)) {
+                when (val st = loader.state) {
+                    Load.Loading -> {
+                        CenteredProgress(Modifier.fillMaxWidth().padding(16.dp))
+                        Text("Claude schreibt …", color = Navi.Muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    is Load.Err -> Text(st.message, color = MaterialTheme.colorScheme.error)
+                    is Load.Ok -> {
+                        Text(st.value.summary, style = MaterialTheme.typography.bodyLarge)
+                        st.value.facts.forEach { f -> Text("• $f", style = MaterialTheme.typography.bodyMedium, color = Navi.Text) }
+                        Text(
+                            if (st.value.known) "Von Claude zusammengefasst – kann Fehler enthalten." else "Claude kennt diesen Song nicht genau.",
+                            style = MaterialTheme.typography.bodySmall, color = Navi.Muted,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Schließen") } },
+    )
+}
+
+@Composable
+private fun Modifier.androidxVerticalScroll(): Modifier = this.then(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()))

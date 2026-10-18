@@ -27,7 +27,7 @@ class MixesTest {
 
     @Test
     fun mixesUseArtistGenresAndDifferFromEachOther() {
-        val mixes = MixRepository(null) { genres }.build(songs, LocalDate.of(2026, 10, 17), genres)
+        val mixes = MixRepository(null, { genres }).build(songs, LocalDate.of(2026, 10, 17), genres)
         val names = mixes.map { it.name }
         println(mixes.joinToString("\n") { "${it.name}: ${it.description} (${it.songs.size})" })
         assertTrue(names.size >= 3)
@@ -39,6 +39,6 @@ class MixesTest {
             assertTrue("${m.name} hat $repeats Wiederholungen", repeats <= m.songs.size / 3)
         }
         // stabil innerhalb eines Tages
-        assertEquals(mixes.map { it.songs.map { s -> s.id } }, MixRepository(null) { genres }.build(songs, LocalDate.of(2026, 10, 17), genres).map { it.songs.map { s -> s.id } })
+        assertEquals(mixes.map { it.songs.map { s -> s.id } }, MixRepository(null, { genres }).build(songs, LocalDate.of(2026, 10, 17), genres).map { it.songs.map { s -> s.id } })
     }
 }

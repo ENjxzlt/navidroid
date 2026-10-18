@@ -11,6 +11,8 @@ const val EXTRA_ALBUM_ID = "albumId"
 const val EXTRA_ARTIST_ID = "artistId"
 const val EXTRA_TRACK_GAIN = "trackGain"
 const val EXTRA_ALBUM_GAIN = "albumGain"
+const val EXTRA_COVER_ART = "coverArt"
+const val EXTRA_GENRE = "genre"
 
 /** MediaItem für einen Navidrome-Titel; die Stream-URL setzt der PlaybackService. */
 fun Song.toMediaItem(client: SubsonicClient): MediaItem = MediaItem.Builder()
@@ -28,6 +30,8 @@ fun Song.toMediaItem(client: SubsonicClient): MediaItem = MediaItem.Builder()
             .setExtras(Bundle().apply {
                 putString(EXTRA_ALBUM_ID, albumId)
                 putString(EXTRA_ARTIST_ID, artistId)
+                putString(EXTRA_COVER_ART, coverArt)
+                putString(EXTRA_GENRE, genre)
                 replayGain?.trackGain?.let { putFloat(EXTRA_TRACK_GAIN, it) }
                 replayGain?.albumGain?.let { putFloat(EXTRA_ALBUM_GAIN, it) }
             })

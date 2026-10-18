@@ -10,7 +10,12 @@ data class Mix(val id: String, val name: String, val description: String, val so
  * Tägliche Mixe wie bei Spotify, berechnet aus der eigenen Bibliothek:
  * je Genre ein Mix (Lieblinge und selten Gehörtes gemischt), dazu „Lieblinge“ und „Entdecken“.
  */
-class MixRepository(private val client: SubsonicClient?, private val artistGenres: suspend () -> Map<String, List<String>>) {
+class MixRepository(
+    private val client: SubsonicClient?,
+    private val artistGenres: suspend () -> Map<String, List<String>>,
+    /** Eigene Wiedergabezahlen (Helfer), falls Navidrome nicht zählt. */
+    private val playCounts: suspend () -> Map<String, Int> = { emptyMap() },
+) {
     @Volatile
     private var cached: Pair<LocalDate, List<Mix>>? = null
 
@@ -23,7 +28,8 @@ class MixRepository(private val client: SubsonicClient?, private val artistGenre
     suspend fun library(force: Boolean = false): Pair<List<Song>, Map<String, List<String>>> {
         val today = LocalDate.now()
         lib?.let { (day, songs, genres) -> if (!force && day == today && songs.isNotEmpty()) return songs to genres }
-        val songs = client?.allSongs().orEmpty()
+        val counts = runCatching { playCounts() }.getOrDefault(emptyMap())
+        val songs = client?.allSongs().orEmpty().map { s -> counts[s.id]?.let { n -> if (n > s.playCount) s.copy(playCount = n.toLong()) else s } ?: s }
         // Ohne Genre-Tags in den Dateien: Genres des Künstlers aus Lidarr verwenden
         val genres = if (songs.any { !it.genre.isNullOrBlank() }) emptyMap() else artistGenres()
         lib = Triple(today, songs, genres)

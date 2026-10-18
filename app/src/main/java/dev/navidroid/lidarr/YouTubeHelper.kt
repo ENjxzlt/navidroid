@@ -204,6 +204,33 @@ data class YtReleases(val working: Boolean = false, val channel: YtChannel? = nu
 data class CoverHit(val url: String, val source: String = "", val title: String = "", val artist: String = "", val size: Int = 0)
 
 @Serializable
+data class HistoryAlbum(val id: String, val name: String? = null, val artist: String? = null, val coverArt: String? = null, val plays: Int = 0)
+
+@Serializable
+data class HistorySummary(val counts: Map<String, Int> = emptyMap(), val recentAlbums: List<HistoryAlbum> = emptyList(), val total: Int = 0)
+
+@Serializable
+data class SongInfo(val summary: String = "", val facts: List<String> = emptyList(), val known: Boolean = true)
+
+@Serializable
+data class LyricsTranslation(val language: String = "", val lines: List<String> = emptyList())
+
+@Serializable
+data class DupVariant(val key: String, val album: String = "", val folder: String = "", val tracks: Int = 0, val formats: List<String> = emptyList(), val bytes: Long = 0, val missingTitles: Int = 0)
+
+@Serializable
+data class DupGroup(val key: String, val artist: String = "", val title: String = "", val variants: List<DupVariant> = emptyList())
+
+@Serializable
+data class LossyAlbum(val albumId: Int, val title: String = "", val artist: String = "", val year: String = "", val quality: String = "", val tracks: Int = 0, val cover: String? = null)
+
+@Serializable
+data class QualityOverview(val albums: List<LossyAlbum> = emptyList(), val upgradesAllowed: Boolean = false)
+
+@Serializable
+data class LosslessRelease(val guid: String, val indexerId: Int, val title: String = "", val quality: String = "", val size: Long = 0, val seeders: Int? = null, val indexer: String = "", val rejections: List<String> = emptyList())
+
+@Serializable
 data class AlbumFilesInfo(val tracks: Int = 0, val bytes: Long = 0, val matched: Int = 0)
 
 @Serializable
@@ -502,6 +529,66 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
             put("count", count)
         }
         return decode(send(config(), "POST", "api/ai/daylist", body.toString(), client = slowHttp))
+    }
+
+    // ---- Hörverlauf (Navidrome zählt hier keine Wiedergaben) ----
+
+    suspend fun recordPlay(user: String, song: dev.navidroid.data.Song, ts: Long) {
+        val body = buildJsonObject {
+            put("user", user)
+            put("ts", ts)
+            put("song", buildJsonObject {
+                put("id", song.id)
+                put("title", song.title)
+                song.artist?.let { put("artist", it) }
+                song.album?.let { put("album", it) }
+                song.albumId?.let { put("albumId", it) }
+                song.coverArt?.let { put("coverArt", it) }
+                song.genre?.let { put("genre", it) }
+                put("duration", song.duration)
+            })
+        }
+        send(config(), "POST", "api/history/play", body.toString())
+    }
+
+    suspend fun historySummary(user: String): HistorySummary =
+        decode(send(config(), "GET", "api/history/summary", query = mapOf("user" to user)))
+
+    // ---- Claude: Über diesen Song, Übersetzung ----
+
+    suspend fun songInfo(artist: String, title: String, album: String?): SongInfo {
+        val body = buildJsonObject { put("artist", artist); put("title", title); album?.let { put("album", it) } }
+        return decode(send(config(), "POST", "api/ai/song-info", body.toString(), client = slowHttp))
+    }
+
+    suspend fun translateLyrics(songId: String, artist: String, title: String, lines: List<String>): LyricsTranslation {
+        val body = buildJsonObject {
+            put("songId", songId); put("artist", artist); put("title", title)
+            put("lines", buildJsonArray { lines.forEach { add(JsonPrimitive(it)) } })
+        }
+        return decode(send(config(), "POST", "api/ai/translate-lyrics", body.toString(), client = slowHttp))
+    }
+
+    // ---- Doppelte Alben, Qualität ----
+
+    suspend fun duplicates(): List<DupGroup> = decode(send(config(), "GET", "api/library/duplicates", client = slowHttp))
+
+    suspend fun resolveDuplicates(keep: String, remove: List<String>, merge: Boolean) {
+        val body = buildJsonObject {
+            put("keep", keep)
+            put("merge", merge)
+            put("remove", buildJsonArray { remove.forEach { add(JsonPrimitive(it)) } })
+        }
+        send(config(), "POST", "api/library/duplicates/resolve", body.toString(), client = slowHttp)
+    }
+
+    suspend fun qualityOverview(): QualityOverview = decode(send(config(), "GET", "api/library/quality", client = slowHttp))
+
+    suspend fun losslessReleases(albumId: Int): List<LosslessRelease> =
+        decode(send(config(), "GET", "api/library/quality/$albumId/releases", client = slowHttp))
+
+    suspend fun grabRelease(guid: String, indexerId: Int) {
+        send(config(), "POST", "api/library/quality/grab", buildJsonObject { put("guid", guid); put("indexerId", indexerId) }.toString())
     }
 
     // ---- Vorschläge ----
