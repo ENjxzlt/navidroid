@@ -1,6 +1,6 @@
 package dev.navidroid.lidarr
 
-import android.content.Context
+import dev.navidroid.data.KeyValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -26,31 +26,29 @@ data class HelperConfig(val url: String, val token: String, val videos: Boolean)
 
 enum class RequestSource { Ask, Lidarr, YouTube }
 
-class HelperStore(context: Context) {
-    private val prefs = context.getSharedPreferences("youtube_helper", Context.MODE_PRIVATE)
-
+class HelperStore(private val prefs: KeyValue) {
     var requestSource: RequestSource
-        get() = runCatching { RequestSource.valueOf(prefs.getString("source", null) ?: "Ask") }.getOrDefault(RequestSource.Ask)
-        set(value) = prefs.edit().putString("source", value.name).apply()
+        get() = runCatching { RequestSource.valueOf(prefs.getString("source") ?: "Ask") }.getOrDefault(RequestSource.Ask)
+        set(value) = prefs.edit { putString("source", value.name) }
 
     @Volatile
     var config: HelperConfig? = load()
         private set
 
     fun save(c: HelperConfig) {
-        prefs.edit().putString("url", c.url).putString("token", c.token).putBoolean("videos", c.videos).apply()
+        prefs.edit { putString("url", c.url); putString("token", c.token); putBoolean("videos", c.videos) }
         config = c
     }
 
     fun clear() {
-        val source = prefs.getString("source", null)
-        prefs.edit().clear().putString("source", source).apply()
+        val source = prefs.getString("source")
+        prefs.edit { clear(); putString("source", source) }
         config = null
     }
 
     private fun load(): HelperConfig? {
-        val url = prefs.getString("url", null) ?: return null
-        val token = prefs.getString("token", null) ?: return null
+        val url = prefs.getString("url") ?: return null
+        val token = prefs.getString("token") ?: return null
         return HelperConfig(url, token, prefs.getBoolean("videos", false))
     }
 }

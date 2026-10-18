@@ -64,5 +64,7 @@ private val typography = Typography(
     labelSmall = base.labelSmall.m(FontWeight.Bold, 11, 0.08),
 )
 
+/** [accent] folgt dem Cover des laufenden Titels. */
 @Composable
-fun NaviTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = scheme, typography = typography, content = content)
+fun NaviTheme(accent: Color = Navi.Accent, content: @Composable () -> Unit) =
+    MaterialTheme(colorScheme = scheme.copy(primary = accent, secondary = accent), typography = typography, content = content)

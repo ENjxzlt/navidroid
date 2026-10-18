@@ -1,5 +1,7 @@
 package dev.navidroid.desktop
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,10 +23,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.AddBox
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,7 +37,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +74,13 @@ import dev.navidroid.data.LyricsRepository
 import dev.navidroid.data.MixRepository
 import dev.navidroid.data.Song
 import dev.navidroid.data.SubsonicClient
+import dev.navidroid.lidarr.HelperClient
+import dev.navidroid.lidarr.HelperConfig
+import dev.navidroid.lidarr.HelperStore
+import dev.navidroid.lidarr.LidarrClient
+import dev.navidroid.lidarr.LidarrStore
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okio.Path.Companion.toOkioPath
@@ -78,6 +92,9 @@ sealed interface Screen {
     data object Search : Screen
     data object Albums : Screen
     data object Artists : Screen
+    data object Requests : Screen
+    data object Mixes : Screen
+    data object Daylist : Screen
     data class AlbumPage(val id: String) : Screen
     data class ArtistPage(val id: String) : Screen
     data class PlaylistPage(val id: String) : Screen
@@ -98,12 +115,30 @@ class DesktopApp {
     val session = DesktopSession()
     var settings by mutableStateOf(DesktopSettings.load())
     val client = SubsonicClient(http, session)
+    val helperStore = HelperStore(FileKeyValue("helper"))
+    val helper = HelperClient(http, helperStore)
+    val lidarrStore = LidarrStore(FileKeyValue("lidarr"))
+    val lidarr = LidarrClient(http, lidarrStore)
     val lyrics = LyricsRepository(http, client, Paths.cache, { settings.onlineLyrics }, { updateSettings(settings.copy(onlineLyrics = it)) })
-    val mixes = MixRepository(client, { emptyMap() })
+    val mixes = MixRepository(client, { if (helper.configured) helper.artistGenres() else emptyMap() }) {
+        val user = session.current?.username
+        if (user != null && helper.configured) helper.historySummary(user).counts else emptyMap()
+    }
+    val daylist = DesktopDaylist(this)
     val player = DesktopPlayer(client) { settings }
     val nav = Nav()
     var loggedIn by mutableStateOf(session.current != null)
     var rightPanel by mutableStateOf(RightPanel.None)
+    var showSettings by mutableStateOf(false)
+    /** Hochzählen lädt Listen (Playlists, Startseite) neu, z. B. nach dem Einrichten des Helfers. */
+    var version by mutableIntStateOf(0)
+
+    init {
+        player.onPlayed = { song, ts ->
+            val user = session.current?.username
+            if (user != null && helper.configured) MainScope().launch { runCatching { helper.recordPlay(user, song, ts) } }
+        }
+    }
 
     fun updateSettings(s: DesktopSettings) {
         settings = s
@@ -111,7 +146,7 @@ class DesktopApp {
     }
 
     fun startRadio(seed: Song) {
-        kotlinx.coroutines.MainScope().launch {
+        MainScope().launch {
             val similar = runCatching { client.similarSongs(seed.id, 50) }.getOrDefault(emptyList()).filter { it.id != seed.id }
             player.play(listOf(seed) + similar)
         }
@@ -129,7 +164,7 @@ fun main() = application {
             .crossfade(true)
             .build()
     }
-    val windowState = rememberWindowState(size = DpSize(1280.dp, 820.dp))
+    val windowState = rememberWindowState(size = DpSize(1440.dp, 900.dp))
     val mpris = remember {
         Mpris(app.player, { app.client.coverArtUrl(it, 600) }, { windowState.isMinimized = false }, { app.player.release(); exitApplication() })
             .also { it.start() }
@@ -145,15 +180,22 @@ fun main() = application {
                 e.key == Key.MediaPlayPause -> { app.player.toggle(); true }
                 e.key == Key.MediaNext -> { app.player.next(); true }
                 e.key == Key.MediaPrevious -> { app.player.previous(); true }
-                e.isCtrlPressed && e.key == Key.F -> { app.nav.go(Screen.Search); true }
+                e.isCtrlPressed && e.key == Key.F -> { app.nav.root(Screen.Search); true }
                 e.isCtrlPressed && e.key == Key.Spacebar -> { app.player.toggle(); true }
                 else -> false
             }
         },
     ) {
-        NaviTheme {
+        // Akzentfarbe folgt dem Cover des laufenden Titels
+        val current by app.player.state.collectAsStateCompat()
+        val coverUrl = current.current?.coverArt?.let { app.client.coverArtUrl(it, 300) }
+        var accentTarget by remember { mutableStateOf(Navi.Accent) }
+        LaunchedEffect(coverUrl) { accentTarget = CoverAccent.load(app.http, coverUrl) ?: Navi.Accent }
+        val accent by animateColorAsState(accentTarget, tween(600))
+        NaviTheme(accent) {
             Box(Modifier.fillMaxSize().background(Navi.Bg)) {
                 if (!app.loggedIn) LoginScreen(app) else MainLayout(app)
+                if (app.showSettings) SettingsDialog(app) { app.showSettings = false }
             }
         }
     }
@@ -164,16 +206,25 @@ private fun LoginScreen(app: DesktopApp) {
     var server by remember { mutableStateOf("") }
     var user by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
+    var helperUrl by remember { mutableStateOf(app.helperStore.config?.url.orEmpty()) }
+    var helperToken by remember { mutableStateOf(app.helperStore.config?.token.orEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(Modifier.width(380.dp).clip(RoundedCornerShape(24.dp)).background(Navi.Surface).padding(28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Box(
+        Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Brush.radialGradient(listOf(Color(0xFF2B1E16), Navi.Bg), radius = 1400f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(Modifier.width(420.dp).clip(RoundedCornerShape(24.dp)).background(Navi.Surface).padding(32.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("NaviDroid", style = MaterialTheme.typography.headlineLarge)
-            Text("Mit deinem Navidrome-Server verbinden", color = Navi.Muted)
-            OutlinedTextField(server, { server = it }, label = { Text("Server-Adresse") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Text("Mit deinem Navidrome-Server verbinden. Dein Passwort wird nicht gespeichert.", color = Navi.Muted)
+            OutlinedTextField(server, { server = it }, label = { Text("Server-Adresse") }, placeholder = { Text("http://192.168.178.10:4533") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(user, { user = it }, label = { Text("Benutzername") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(pass, { pass = it }, label = { Text("Passwort") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(helperUrl, { helperUrl = it }, label = { Text("NaviDroid-Helfer (optional)") }, placeholder = { Text("http://192.168.178.10:8787") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            if (helperUrl.isNotBlank()) {
+                OutlinedTextField(helperToken, { helperToken = it }, label = { Text("Helfer-Token") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            }
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(
                 enabled = !busy && server.isNotBlank() && user.isNotBlank(),
@@ -184,6 +235,11 @@ private fun LoginScreen(app: DesktopApp) {
                         try {
                             val c = Auth.createCredentials(server, user, pass)
                             app.client.ping(c)
+                            if (helperUrl.isNotBlank()) {
+                                val url = dev.navidroid.lidarr.LidarrStore.normalizeUrl(helperUrl)
+                                app.helper.health(url, helperToken)
+                                app.helperStore.save(HelperConfig(url, helperToken.trim(), false))
+                            }
                             app.session.save(c)
                             app.loggedIn = true
                         } catch (e: Exception) {
@@ -193,30 +249,35 @@ private fun LoginScreen(app: DesktopApp) {
                         }
                     }
                 },
-                modifier = Modifier.fillMaxWidth().height(46.dp),
-            ) { Text(if (busy) "Verbinde …" else "Anmelden") }
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) { Text(if (busy) "Verbinde …" else "Anmelden", fontWeight = FontWeight.ExtraBold) }
         }
     }
 }
 
 @Composable
 private fun MainLayout(app: DesktopApp) {
+    LaunchedEffect(Unit) {
+        while (true) {
+            runCatching { app.daylist.ensure() }
+            delay(60_000)
+        }
+    }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.weight(1f).fillMaxWidth()) {
-            Sidebar(app, Modifier.width(240.dp).fillMaxHeight())
-            Box(Modifier.weight(1f).fillMaxHeight().padding(top = 8.dp, end = 8.dp).clip(RoundedCornerShape(16.dp)).background(Navi.Surface.copy(alpha = 0.55f))) {
-                Column(Modifier.fillMaxSize()) {
-                    if (app.nav.stack.size > 1) {
-                        IconButton(onClick = app.nav::back, modifier = Modifier.padding(start = 12.dp, top = 8.dp)) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück")
-                        }
-                    }
-                    Box(Modifier.weight(1f)) { ScreenContent(app, app.nav.current) }
+        Row(Modifier.weight(1f).fillMaxWidth().padding(start = 8.dp, top = 8.dp, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Sidebar(app, Modifier.width(250.dp).fillMaxHeight())
+            Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(16.dp)).background(Color(0xFF121317))) {
+                ScreenContent(app, app.nav.current)
+                if (app.nav.stack.size > 1) {
+                    IconButton(
+                        onClick = app.nav::back,
+                        modifier = Modifier.padding(start = 16.dp, top = 14.dp).size(36.dp).clip(RoundedCornerShape(18.dp)).background(Color.Black.copy(alpha = 0.35f)),
+                    ) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Zurück", modifier = Modifier.size(20.dp)) }
                 }
             }
             when (app.rightPanel) {
-                RightPanel.Queue -> QueuePanel(app, Modifier.width(340.dp).fillMaxHeight().padding(top = 8.dp, end = 8.dp))
-                RightPanel.Lyrics -> LyricsPanel(app, Modifier.width(420.dp).fillMaxHeight().padding(top = 8.dp, end = 8.dp))
+                RightPanel.Queue -> QueuePanel(app, Modifier.width(340.dp).fillMaxHeight())
+                RightPanel.Lyrics -> LyricsPanel(app, Modifier.width(420.dp).fillMaxHeight())
                 RightPanel.None -> Unit
             }
         }
@@ -226,26 +287,44 @@ private fun MainLayout(app: DesktopApp) {
 
 @Composable
 private fun Sidebar(app: DesktopApp, modifier: Modifier) {
-    val playlists = rememberLoad("playlists") { app.client.playlists() }
+    val playlists = rememberLoad("playlists:${app.version}") { app.client.playlists() }
+    val active = rememberActiveDownloads(app)
     Column(modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text("NaviDroid", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 16.dp)) {
+            Text("NaviDroid", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            IconButton(onClick = { app.showSettings = true }) { Icon(Icons.Rounded.Settings, "Einstellungen", tint = Navi.Muted) }
+        }
         NavItem(Icons.Rounded.Home, "Start", app.nav.current == Screen.Home) { app.nav.root(Screen.Home) }
         NavItem(Icons.Rounded.Search, "Suche", app.nav.current == Screen.Search) { app.nav.root(Screen.Search) }
         NavItem(Icons.Rounded.Album, "Alben", app.nav.current == Screen.Albums) { app.nav.root(Screen.Albums) }
         NavItem(Icons.Rounded.Person, "Künstler", app.nav.current == Screen.Artists) { app.nav.root(Screen.Artists) }
-        Text("PLAYLISTS", style = MaterialTheme.typography.labelSmall, color = Navi.Muted, modifier = Modifier.padding(start = 12.dp, top = 20.dp, bottom = 6.dp))
+        NavItem(Icons.Rounded.AddBox, "Anfragen", app.nav.current == Screen.Requests, badge = active) { app.nav.root(Screen.Requests) }
+        Text("BIBLIOTHEK", style = MaterialTheme.typography.labelSmall, color = Navi.Muted, modifier = Modifier.padding(start = 12.dp, top = 20.dp, bottom = 6.dp))
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (app.nav.current == Screen.Mixes) Navi.Surface2 else Color.Transparent)
+                .clickable { app.nav.root(Screen.Mixes) }.padding(horizontal = 12.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)).background(Navi.Surface2), contentAlignment = Alignment.Center) {
+                Icon(Icons.Rounded.Folder, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            }
+            Text("Mixe & Daylist", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+        }
         Box(Modifier.weight(1f)) {
             when (val s = playlists.first) {
                 is Load.Ok -> LazyColumn {
                     items(s.value.filterNot { MixRepository.isPluginPlaylist(it.comment) }, key = { it.id }) { pl ->
                         val selected = app.nav.current == Screen.PlaylistPage(pl.id)
-                        Text(
-                            pl.name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (selected) MaterialTheme.colorScheme.primary else Navi.Text,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { app.nav.go(Screen.PlaylistPage(pl.id)) }.padding(horizontal = 12.dp, vertical = 7.dp),
-                        )
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Navi.Surface2 else Color.Transparent)
+                                .clickable { app.nav.go(Screen.PlaylistPage(pl.id)) }.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Cover(app.client.coverArtUrl(pl.coverArt, 100), Modifier.size(32.dp), 6)
+                            Text(pl.name, style = MaterialTheme.typography.bodyMedium, color = if (selected) MaterialTheme.colorScheme.primary else Color(0xFFD5D8DE), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
                 else -> Unit
@@ -260,14 +339,19 @@ private fun Sidebar(app: DesktopApp, modifier: Modifier) {
 }
 
 @Composable
-private fun NavItem(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit) {
+private fun NavItem(icon: ImageVector, label: String, selected: Boolean, badge: Int = 0, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Navi.Surface2 else Color.Transparent).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Icon(icon, null, tint = if (selected) MaterialTheme.colorScheme.primary else Navi.Muted, modifier = Modifier.size(22.dp))
-        Text(label, style = MaterialTheme.typography.titleSmall.copy(fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold), color = if (selected) Navi.Text else Navi.Muted)
+        Text(label, style = MaterialTheme.typography.titleSmall.copy(fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold), color = if (selected) Navi.Text else Navi.Muted, modifier = Modifier.weight(1f))
+        if (badge > 0) {
+            Box(Modifier.size(20.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
+                Text("$badge", style = MaterialTheme.typography.labelSmall, color = Navi.Bg)
+            }
+        }
     }
 }
 
@@ -278,6 +362,9 @@ private fun ScreenContent(app: DesktopApp, screen: Screen) {
         Screen.Search -> SearchScreen(app)
         Screen.Albums -> AlbumsScreen(app)
         Screen.Artists -> ArtistsScreen(app)
+        Screen.Requests -> RequestsScreen(app)
+        Screen.Mixes -> MixesFolderScreen(app)
+        Screen.Daylist -> DaylistScreen(app)
         is Screen.AlbumPage -> AlbumScreen(app, screen.id)
         is Screen.ArtistPage -> ArtistScreen(app, screen.id)
         is Screen.PlaylistPage -> PlaylistScreen(app, screen.id)

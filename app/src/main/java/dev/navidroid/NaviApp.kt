@@ -64,9 +64,9 @@ class NaviApp : Application(), ImageLoaderFactory {
             val user = session.current?.username
             if (user != null && helper.configured) helper.historySummary(user).counts else emptyMap()
         }
-        lidarrStore = LidarrStore(this)
+        lidarrStore = LidarrStore(dev.navidroid.data.PrefsKeyValue(this, "lidarr"))
         lidarr = LidarrClient(http, lidarrStore)
-        helperStore = HelperStore(this)
+        helperStore = HelperStore(dev.navidroid.data.PrefsKeyValue(this, "youtube_helper"))
         helper = HelperClient(http, helperStore)
         offline = OfflineManager(this).also { it.start() }
         daylist = dev.navidroid.data.DaylistRepository(this)

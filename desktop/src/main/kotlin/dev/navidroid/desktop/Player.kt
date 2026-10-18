@@ -48,6 +48,8 @@ class DesktopPlayer(private val client: SubsonicClient, private val settings: ()
     private var original: List<Song> = emptyList()
     private var submitted = false
     var onTrackChanged: (() -> Unit)? = null
+    /** Titel zu Ende gehört (für den Hörverlauf im Helfer). */
+    var onPlayed: ((Song, Long) -> Unit)? = null
 
     init {
         try {
@@ -211,6 +213,7 @@ class DesktopPlayer(private val client: SubsonicClient, private val settings: ()
             submitted = true
             val now = System.currentTimeMillis()
             scope.launch { runCatching { client.scrobble(song.id, submission = true, timeMs = now) } }
+            onPlayed?.invoke(song, now)
         }
     }
 

@@ -1364,10 +1364,11 @@ private fun YouTubeImportSheet(app: NaviApp, vm: RequestsVm, target: ImportTarge
                             }
                         }
                     } else if (pv.album != null) {
+                        val pvAlbum = pv.album!!
                         val matched = pv.mapping.count { it.videoId != null }
                         item {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Zuordnung zu ${pv.album.title}", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("Zuordnung zu ${pvAlbum.title}", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("$matched von ${pv.mapping.size} erkannt", style = MaterialTheme.typography.labelMedium, color = accent)
                             }
                             if (target.album == null) {
@@ -1408,7 +1409,7 @@ private fun YouTubeImportSheet(app: NaviApp, vm: RequestsVm, target: ImportTarge
                         }
                         item {
                             Surface(
-                                onClick = { vm.startImport(link, pv.album.id, videos, pv.mapping) },
+                                onClick = { vm.startImport(link, pvAlbum.id, videos, pv.mapping) },
                                 enabled = matched > 0 && !vm.startingImport,
                                 shape = RoundedCornerShape(26.dp),
                                 color = if (matched > 0) accent else Navi.Outline,

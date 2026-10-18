@@ -1,6 +1,6 @@
 package dev.navidroid.lidarr
 
-import android.content.Context
+import dev.navidroid.data.KeyValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
@@ -40,33 +40,31 @@ data class LidarrConfig(
     val rootFolderPath: String,
 )
 
-class LidarrStore(context: Context) {
-    private val prefs = context.getSharedPreferences("lidarr", Context.MODE_PRIVATE)
-
+class LidarrStore(private val prefs: KeyValue) {
     @Volatile
     var config: LidarrConfig? = load()
         private set
 
     fun save(c: LidarrConfig) {
-        prefs.edit()
-            .putString("url", c.url)
-            .putString("apiKey", c.apiKey)
-            .putInt("quality", c.qualityProfileId)
-            .putInt("metadata", c.metadataProfileId)
-            .putString("root", c.rootFolderPath)
-            .apply()
+        prefs.edit {
+            putString("url", c.url)
+            putString("apiKey", c.apiKey)
+            putInt("quality", c.qualityProfileId)
+            putInt("metadata", c.metadataProfileId)
+            putString("root", c.rootFolderPath)
+        }
         config = c
     }
 
     fun clear() {
-        prefs.edit().clear().apply()
+        prefs.edit { clear() }
         config = null
     }
 
     private fun load(): LidarrConfig? {
-        val url = prefs.getString("url", null) ?: return null
-        val key = prefs.getString("apiKey", null) ?: return null
-        val root = prefs.getString("root", null) ?: return null
+        val url = prefs.getString("url") ?: return null
+        val key = prefs.getString("apiKey") ?: return null
+        val root = prefs.getString("root") ?: return null
         return LidarrConfig(url, key, prefs.getInt("quality", 1), prefs.getInt("metadata", 1), root)
     }
 
