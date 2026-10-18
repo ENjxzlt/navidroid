@@ -193,7 +193,8 @@ fun main() = application {
         LaunchedEffect(coverUrl) { accentTarget = CoverAccent.load(app.http, coverUrl) ?: Navi.Accent }
         val accent by animateColorAsState(accentTarget, tween(600))
         NaviTheme(accent) {
-            Box(Modifier.fillMaxSize().background(Navi.Bg)) {
+            // Surface setzt die Textfarbe; ohne sie wäre Text ohne eigene Farbe schwarz
+            androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = Navi.Bg, contentColor = Navi.Text) {
                 if (!app.loggedIn) LoginScreen(app) else MainLayout(app)
                 if (app.showSettings) SettingsDialog(app) { app.showSettings = false }
             }

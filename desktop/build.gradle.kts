@@ -38,7 +38,8 @@ compose.desktop {
             packageVersion = appVersionName.substringBefore("-")
             description = "NaviDroid – Navidrome-Client"
             vendor = "NaviDroid"
-            modules("java.naming", "java.net.http", "jdk.unsupported")
+            // jdk.security.auth: dbus-java (MPRIS) braucht com.sun.security.auth.module.UnixSystem
+            modules("java.naming", "java.net.http", "jdk.unsupported", "jdk.security.auth")
             linux {
                 iconFile.set(project.file("icon.png"))
                 shortcut = true

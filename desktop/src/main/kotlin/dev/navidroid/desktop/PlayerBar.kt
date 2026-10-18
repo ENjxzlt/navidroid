@@ -135,12 +135,11 @@ fun PlayerBar(app: DesktopApp) {
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(formatTime(((seeking ?: 0f) * s.durationMs).toLong().takeIf { seeking != null } ?: s.positionMs), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, fontSize = 11.sp)
-                Slider(
+                ThinSlider(
                     value = seeking ?: if (s.durationMs > 0) (s.positionMs.toFloat() / s.durationMs).coerceIn(0f, 1f) else 0f,
                     onValueChange = { seeking = it },
                     onValueChangeFinished = { seeking?.let { app.player.seek((it * s.durationMs).toLong()) }; seeking = null },
-                    colors = SliderDefaults.colors(thumbColor = Navi.Text, activeTrackColor = Navi.Text, inactiveTrackColor = Navi.Outline),
-                    modifier = Modifier.width(480.dp).height(20.dp),
+                    modifier = Modifier.width(480.dp),
                 )
                 Text(formatTime(s.durationMs), style = MaterialTheme.typography.bodySmall, color = Navi.Muted, fontSize = 11.sp)
             }
@@ -151,11 +150,10 @@ fun PlayerBar(app: DesktopApp) {
             }
             QueueToggle(app)
             Icon(Icons.AutoMirrored.Rounded.VolumeUp, null, tint = Navi.Muted, modifier = Modifier.padding(start = 8.dp))
-            Slider(
+            ThinSlider(
                 value = s.volume / 100f,
                 onValueChange = { app.player.setVolume((it * 100).toInt()) },
                 onValueChangeFinished = { app.updateSettings(app.settings.copy(volume = app.player.state.value.volume)) },
-                colors = SliderDefaults.colors(thumbColor = Navi.Text, activeTrackColor = Navi.Text, inactiveTrackColor = Navi.Outline),
                 modifier = Modifier.width(130.dp),
             )
         }

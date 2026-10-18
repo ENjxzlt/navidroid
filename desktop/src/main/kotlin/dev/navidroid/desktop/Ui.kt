@@ -15,6 +15,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -163,3 +168,34 @@ fun SongRow(app: DesktopApp, song: Song, index: Int, showCover: Boolean = false,
 
 @Composable
 fun <T> kotlinx.coroutines.flow.StateFlow<T>.collectAsStateCompat() = collectAsState()
+
+/** Schmaler Schieberegler wie bei Spotify: dünne Spur, Griff erscheint beim Darüberfahren. */
+@Composable
+fun ThinSlider(value: Float, onValueChange: (Float) -> Unit, onValueChangeFinished: () -> Unit, modifier: Modifier = Modifier) {
+    val hover = remember { MutableInteractionSource() }
+    val hovered by hover.collectIsHoveredAsState()
+    var dragging by remember { mutableStateOf(false) }
+    val active = hovered || dragging
+    val accent = MaterialTheme.colorScheme.primary
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        modifier.height(16.dp).hoverable(hover)
+            .pointerInput(Unit) {
+                detectTapGestures { o -> onValueChange((o.x / size.width).coerceIn(0f, 1f)); onValueChangeFinished() }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { o -> dragging = true; onValueChange((o.x / size.width).coerceIn(0f, 1f)) },
+                    onDragEnd = { dragging = false; onValueChangeFinished() },
+                    onDragCancel = { dragging = false; onValueChangeFinished() },
+                ) { change, _ -> onValueChange((change.position.x / size.width).coerceIn(0f, 1f)) }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        val v = value.coerceIn(0f, 1f)
+        Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Navi.Outline))
+        Box(Modifier.fillMaxWidth(v).height(4.dp).clip(RoundedCornerShape(2.dp)).background(if (active) accent else Navi.Text))
+        if (active) {
+            Box(Modifier.offset(x = maxWidth * v - 6.dp).size(12.dp).clip(RoundedCornerShape(6.dp)).background(Navi.Text))
+        }
+    }
+}
