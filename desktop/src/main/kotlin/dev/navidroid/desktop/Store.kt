@@ -47,6 +47,21 @@ data class DesktopSettings(
     val onlineLyrics: Boolean = true,
     val volume: Int = 80,
     val autoplay: Boolean = true,
+    /** Streaming-Qualität in kbit/s, 0 = Original. */
+    val bitrate: Int = 0,
+    /** 0 = aus, 1 = pro Titel, 2 = pro Album (wie in der App). */
+    val replayGain: Int = 1,
+    /** Überblenden in Sekunden, 0 = aus. */
+    val crossfade: Int = 0,
+    val coverColors: Boolean = true,
+    /** Musikvideos (vom Helfer) im Player zeigen. */
+    val videos: Boolean = false,
+    /** Download-Qualität in kbit/s, 0 = Original. */
+    val downloadBitrate: Int = 0,
+    /** Ordner für Offline-Musik, leer = ~/Musik/NaviDroid. */
+    val downloadDir: String = "",
+    /** Heruntergeladene Playlists und Mixe automatisch aktuell halten. */
+    val autoSyncDownloads: Boolean = true,
     /** Zeitstempel des letzten Abgleichs mit dem Handy (über den Helfer). */
     val syncedAt: Long = 0,
 ) {

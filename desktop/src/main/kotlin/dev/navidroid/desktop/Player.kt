@@ -50,6 +50,8 @@ class DesktopPlayer(private val client: SubsonicClient, private val settings: ()
     var onTrackChanged: (() -> Unit)? = null
     /** Titel zu Ende gehört (für den Hörverlauf im Helfer). */
     var onPlayed: ((Song, Long) -> Unit)? = null
+    /** Lokale Datei (Offline-Download) statt Stream, falls vorhanden. */
+    var localUrl: (Song) -> String? = { null }
 
     init {
         try {
@@ -188,7 +190,7 @@ class DesktopPlayer(private val client: SubsonicClient, private val settings: ()
         val p = mp ?: return
         val song = _state.value.queue.getOrNull(index) ?: return
         submitted = false
-        val url = runCatching { client.streamUrl(song.id, 0) }.getOrNull() ?: return
+        val url = localUrl(song) ?: runCatching { client.streamUrl(song.id, settings().bitrate) }.getOrNull() ?: return
         _state.update { it.copy(positionMs = 0, durationMs = song.duration * 1000L, buffering = true, error = null) }
         p.media().play(url)
         onTrackChanged?.invoke()

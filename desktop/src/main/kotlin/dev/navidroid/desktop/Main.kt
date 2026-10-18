@@ -23,7 +23,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddBox
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.DownloadForOffline
+import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Home
@@ -99,6 +103,11 @@ sealed interface Screen {
     data class ArtistPage(val id: String) : Screen
     data class PlaylistPage(val id: String) : Screen
     data class MixPage(val id: String) : Screen
+    data object Settings : Screen
+    data object AiPlaylist : Screen
+    data object Downloads : Screen
+    data class Library(val tab: String = "upload") : Screen
+    data class PlaylistEdit(val id: String) : Screen
 }
 
 class Nav {
@@ -126,14 +135,19 @@ class DesktopApp {
     }
     val daylist = DesktopDaylist(this)
     val player = DesktopPlayer(client) { settings }
+    val offline = OfflineManager(this)
+    /** Laufende Version (von jpackage gesetzt), beim Start aus der IDE „dev“. */
+    val appVersion: String = System.getProperty("jpackage.app-version") ?: "dev"
     val nav = Nav()
     var loggedIn by mutableStateOf(session.current != null)
     var rightPanel by mutableStateOf(RightPanel.None)
     var showSettings by mutableStateOf(false)
+    var showNewPlaylist by mutableStateOf(false)
     /** Hochzählen lädt Listen (Playlists, Startseite) neu, z. B. nach dem Einrichten des Helfers. */
     var version by mutableIntStateOf(0)
 
     init {
+        player.localUrl = { song -> offline.localUrl(song.id) }
         player.onPlayed = { song, ts ->
             val user = session.current?.username
             if (user != null && helper.configured) MainScope().launch { runCatching { helper.recordPlay(user, song, ts) } }
@@ -161,6 +175,9 @@ class DesktopApp {
                 updateSettings(settings.copy(
                     onlineLyrics = remote.bool("onlineLyrics") ?: settings.onlineLyrics,
                     autoplay = remote.bool("autoplay") ?: settings.autoplay,
+                    replayGain = remote.int("replayGain") ?: settings.replayGain,
+                    crossfade = remote.int("crossfade") ?: settings.crossfade,
+                    coverColors = remote.bool("coverColors") ?: settings.coverColors,
                     syncedAt = ts,
                 ))
             }
@@ -173,6 +190,9 @@ class DesktopApp {
                 lidarrStore.config?.let { put("lidarr", dev.navidroid.lidarr.SyncFormat.lidarr(it)) }
                 put("onlineLyrics", kotlinx.serialization.json.JsonPrimitive(settings.onlineLyrics))
                 put("autoplay", kotlinx.serialization.json.JsonPrimitive(settings.autoplay))
+                put("replayGain", kotlinx.serialization.json.JsonPrimitive(settings.replayGain))
+                put("crossfade", kotlinx.serialization.json.JsonPrimitive(settings.crossfade))
+                put("coverColors", kotlinx.serialization.json.JsonPrimitive(settings.coverColors))
             }
             runCatching { helper.putSettings(user, data, now) }.onSuccess { updateSettings(settings.copy(syncedAt = now)) }
         }
@@ -191,7 +211,7 @@ class DesktopApp {
     }
 }
 
-enum class RightPanel { None, Queue, Lyrics }
+enum class RightPanel { None, Queue, Lyrics, Video }
 
 fun main() = application {
     val app = remember { DesktopApp() }
@@ -228,13 +248,14 @@ fun main() = application {
         val current by app.player.state.collectAsStateCompat()
         val coverUrl = current.current?.coverArt?.let { app.client.coverArtUrl(it, 300) }
         var accentTarget by remember { mutableStateOf(Navi.Accent) }
-        LaunchedEffect(coverUrl) { accentTarget = CoverAccent.load(app.http, coverUrl) ?: Navi.Accent }
+        LaunchedEffect(coverUrl, app.settings.coverColors) { accentTarget = if (app.settings.coverColors) CoverAccent.load(app.http, coverUrl) ?: Navi.Accent else Navi.Accent }
         val accent by animateColorAsState(accentTarget, tween(600))
         NaviTheme(accent) {
             // Surface setzt die Textfarbe; ohne sie wäre Text ohne eigene Farbe schwarz
             androidx.compose.material3.Surface(Modifier.fillMaxSize(), color = Navi.Bg, contentColor = Navi.Text) {
                 if (!app.loggedIn) LoginScreen(app) else MainLayout(app)
                 if (app.showSettings) SettingsDialog(app) { app.showSettings = false }
+                if (app.showNewPlaylist) NewPlaylistDialog(app) { app.showNewPlaylist = false }
             }
         }
     }
@@ -318,6 +339,7 @@ private fun MainLayout(app: DesktopApp) {
             when (app.rightPanel) {
                 RightPanel.Queue -> QueuePanel(app, Modifier.width(340.dp).fillMaxHeight())
                 RightPanel.Lyrics -> LyricsPanel(app, Modifier.width(420.dp).fillMaxHeight())
+                RightPanel.Video -> VideoPanel(app, Modifier.width(480.dp).fillMaxHeight())
                 RightPanel.None -> Unit
             }
         }
@@ -332,14 +354,24 @@ private fun Sidebar(app: DesktopApp, modifier: Modifier) {
     Column(modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 16.dp)) {
             Text("NaviDroid", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            IconButton(onClick = { app.showSettings = true }) { Icon(Icons.Rounded.Settings, "Einstellungen", tint = Navi.Muted) }
+            IconButton(onClick = { app.nav.root(Screen.Settings) }) { Icon(Icons.Rounded.Settings, "Einstellungen", tint = Navi.Muted) }
         }
         NavItem(Icons.Rounded.Home, "Start", app.nav.current == Screen.Home) { app.nav.root(Screen.Home) }
         NavItem(Icons.Rounded.Search, "Suche", app.nav.current == Screen.Search) { app.nav.root(Screen.Search) }
         NavItem(Icons.Rounded.Album, "Alben", app.nav.current == Screen.Albums) { app.nav.root(Screen.Albums) }
         NavItem(Icons.Rounded.Person, "Künstler", app.nav.current == Screen.Artists) { app.nav.root(Screen.Artists) }
         NavItem(Icons.Rounded.AddBox, "Anfragen", app.nav.current == Screen.Requests, badge = active) { app.nav.root(Screen.Requests) }
-        Text("BIBLIOTHEK", style = MaterialTheme.typography.labelSmall, color = Navi.Muted, modifier = Modifier.padding(start = 12.dp, top = 20.dp, bottom = 6.dp))
+        NavItem(Icons.Rounded.DownloadForOffline, "Downloads", app.nav.current == Screen.Downloads) { app.nav.root(Screen.Downloads) }
+        NavItem(Icons.Rounded.LibraryMusic, "Bibliothek-Werkzeuge", app.nav.current is Screen.Library) { app.nav.root(Screen.Library()) }
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, top = 14.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("BIBLIOTHEK", style = MaterialTheme.typography.labelSmall, color = Navi.Muted, modifier = Modifier.weight(1f))
+            IconButton(onClick = { app.nav.root(Screen.AiPlaylist) }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Rounded.AutoAwesome, "KI-Playlist", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            }
+            IconButton(onClick = { app.showNewPlaylist = true }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Rounded.Add, "Neue Playlist", tint = Navi.Text, modifier = Modifier.size(20.dp))
+            }
+        }
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (app.nav.current == Screen.Mixes) Navi.Surface2 else Color.Transparent)
                 .clickable { app.nav.root(Screen.Mixes) }.padding(horizontal = 12.dp, vertical = 7.dp),
@@ -409,6 +441,11 @@ private fun ScreenContent(app: DesktopApp, screen: Screen) {
         is Screen.ArtistPage -> ArtistScreen(app, screen.id)
         is Screen.PlaylistPage -> PlaylistScreen(app, screen.id)
         is Screen.MixPage -> MixScreen(app, screen.id)
+        Screen.Settings -> SettingsScreen(app)
+        Screen.AiPlaylist -> AiPlaylistScreen(app)
+        Screen.Downloads -> DownloadsScreen(app)
+        is Screen.Library -> LibraryScreen(app, screen.tab)
+        is Screen.PlaylistEdit -> PlaylistEditScreen(app, screen.id)
     }
 }
 
