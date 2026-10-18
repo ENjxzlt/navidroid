@@ -345,3 +345,49 @@ def already_there(index: Index, target: Path, artist: str, album: str, title: st
         return True
     t, a = norm(title), norm(album)
     return any(norm(f["title"]) == t and norm(f["album"]) == a and _artist_matches(artist, f) for f in index.files())
+
+
+# ---- Fehlende Cover ----
+
+IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+
+def has_embedded_cover(path: str) -> bool:
+    ext = Path(path).suffix.lower()
+    try:
+        if ext == ".mp3":
+            return bool(ID3(path).getall("APIC"))
+        if ext == ".flac":
+            return bool(FLAC(path).pictures)
+        if ext in (".m4a", ".mp4"):
+            return bool(MP4(path).tags and MP4(path).tags.get("covr"))
+        f = mutagen.File(path)
+        return bool(getattr(f, "pictures", None))
+    except Exception:
+        return False
+
+
+def folder_has_image(folder: Path) -> bool:
+    try:
+        return any(p.is_file() and p.suffix.lower() in IMAGE_EXT for p in folder.iterdir())
+    except OSError:
+        return False
+
+
+def albums_without_cover(index: Index) -> list[dict]:
+    """Alben (Albumkünstler + Album), bei denen weder eine Datei ein Bild enthält noch ein Bild im Ordner liegt."""
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for f in index.files():
+        if not f["album"]:
+            continue
+        artist = f["albumartist"] or f["artist"]
+        groups.setdefault((norm(artist), norm(f["album"])), []).append(f)
+    out = []
+    for files in groups.values():
+        if any(folder_has_image(Path(f["path"]).parent) for f in files):
+            continue
+        if any(has_embedded_cover(f["path"]) for f in files[:3]):
+            continue
+        first = files[0]
+        out.append({"artist": first["albumartist"] or first["artist"], "album": first["album"], "files": files})
+    return out

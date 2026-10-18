@@ -100,3 +100,17 @@ class LibraryTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MissingCoverTest(unittest.TestCase):
+    def test_albums_without_cover(self):
+        with tempfile.TemporaryDirectory() as d:
+            music = Path(d)
+            make_audio(music / "A" / "Ohne (2020)" / "01 - x.mp3", {"title": "x", "album": "Ohne", "album_artist": "A"})
+            make_audio(music / "A" / "Mit (2021)" / "01 - y.mp3", {"title": "y", "album": "Mit", "album_artist": "A"})
+            (music / "A" / "Mit (2021)" / "folder.jpg").write_bytes(b"x")
+            idx = library.Index(music)
+            missing = library.albums_without_cover(idx)
+            self.assertEqual([m["album"] for m in missing], ["Ohne"])
+            library.set_cover(idx, missing[0]["files"], b"\xff\xd8jpeg", "image/jpeg")
+            self.assertEqual(library.albums_without_cover(library.Index(music)), [])

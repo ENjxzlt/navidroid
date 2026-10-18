@@ -43,7 +43,7 @@ import suggestions
 import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.12.0"
+VERSION = "1.13.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -1413,6 +1413,62 @@ def library_album_cover_url(req: CoverUrlRequest) -> dict:
     with _library_lock:
         library.set_cover(_index, files, image, mime)
     return {"tracks": len(files)}
+
+
+COVERS_LOG = DATA_DIR / "covers_filled.json"
+
+
+def fill_missing_covers(apply: bool) -> dict:
+    """Fehlende Albumcover von Deezer setzen – nur bei eindeutigem Treffer (Künstler und Album gleich)."""
+    index = _need_library()
+    found, skipped = [], []
+    for alb in library.albums_without_cover(index):
+        try:
+            hit = covers.exact_deezer(alb["artist"], alb["album"])
+        except Exception as e:  # noqa: BLE001
+            skipped.append({"artist": alb["artist"], "album": alb["album"], "reason": f"Deezer: {e}"})
+            continue
+        if not hit:
+            skipped.append({"artist": alb["artist"], "album": alb["album"], "reason": "kein eindeutiger Treffer"})
+            continue
+        entry = {"artist": alb["artist"], "album": alb["album"], "cover": hit["url"]}
+        if apply:
+            try:
+                image, mime = covers.download(hit["url"])
+                with _library_lock:
+                    library.set_cover(index, alb["files"], image, mime)
+                entry["done"] = True
+            except Exception as e:  # noqa: BLE001
+                entry["error"] = str(e)
+        found.append(entry)
+    result = {"matched": found, "skipped": skipped, "applied": apply, "at": time.strftime("%Y-%m-%d %H:%M")}
+    if apply:
+        tmp = COVERS_LOG.with_suffix(".tmp")
+        tmp.write_text(json.dumps(result))
+        tmp.replace(COVERS_LOG)
+    return result
+
+
+@app.post("/api/library/covers/fill", dependencies=[Depends(require_token)])
+def library_fill_covers(apply: bool = False) -> dict:
+    return fill_missing_covers(apply)
+
+
+def _fill_covers_daily() -> None:
+    time.sleep(600)  # nicht direkt beim Start
+    while True:
+        try:
+            r = fill_missing_covers(apply=True)
+            n = sum(1 for m in r["matched"] if m.get("done"))
+            if n:
+                log.info("Fehlende Cover: %d Alben von Deezer ergänzt", n)
+        except Exception:
+            log.exception("Fehlende Cover ergänzen fehlgeschlagen")
+        time.sleep(24 * 3600)
+
+
+if MUSIC_DIR:
+    threading.Thread(target=_fill_covers_daily, daemon=True).start()
 
 
 @app.get("/api/library/trash", dependencies=[Depends(require_token)])

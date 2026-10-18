@@ -103,3 +103,14 @@ def download(url: str) -> tuple[bytes, str]:
             if len(data) > MAX_BYTES:
                 raise ValueError("Bild zu groß")
     return data, mime
+
+
+def exact_deezer(artist: str, album: str, get: Get = _json) -> dict | None:
+    """Nur ein Deezer-Treffer, bei dem Künstler und Albumtitel übereinstimmen (sonst lieber kein Cover)."""
+    a, b = _norm(artist), _norm(album)
+    for r in deezer(artist, album, get):
+        title = _norm(r["title"])
+        title_ok = title == b or re.sub(r" (deluxe|edition|remaster(ed)?|expanded|version).*$", "", title) == b
+        if title_ok and _norm(r["artist"]) == a:
+            return r
+    return None

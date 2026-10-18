@@ -35,3 +35,9 @@ class CoversTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExactDeezerTest(unittest.TestCase):
+    def test_only_exact(self):
+        self.assertEqual(covers.exact_deezer("Frank Ocean", "Blonde", get=fake)["title"], "Blonde")
+        self.assertIsNone(covers.exact_deezer("Frank Ocean", "Endless", get=fake))
