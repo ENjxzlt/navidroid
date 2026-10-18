@@ -25,7 +25,14 @@ import (
 const (
 	markDaylist = "NaviDroid-Daylist"
 	markMix     = "NaviDroid-Mix"
+	// Gemeinsamer Namensanfang: Subsonic kennt keine Playlist-Ordner, so stehen die Mixe in jeder App beisammen.
+	namePrefix = "Mix · "
 )
+
+// mixTitle: "Indie Mix" → "Mix · Indie", "Lieblinge" → "Mix · Lieblinge"
+func mixTitle(name string) string {
+	return namePrefix + strings.TrimSuffix(name, " Mix")
+}
 
 func init() {
 	lifecycle.Register(&plugin{})
@@ -269,9 +276,10 @@ func updateMixes(user string) (int, error) {
 		for _, s := range m.Songs {
 			ids = append(ids, s.ID)
 		}
-		prev := byName[m.Name]
+		title := mixTitle(m.Name)
+		prev := byName[title]
 		comment := markMix + " · täglich neu · " + m.Description
-		id, err := writePlaylist(user, prev.ID, m.Name, comment, ids)
+		id, err := writePlaylist(user, prev.ID, title, comment, ids)
 		if err != nil {
 			pdk.Log(pdk.LogWarn, fmt.Sprintf("Mix %s: %v", m.Name, err))
 			continue
@@ -330,7 +338,7 @@ func updateDaylist(user string) (bool, error) {
 		return false, errors.New("leere Daylist")
 	}
 	marker := markDaylist + " " + d.SlotKey
-	if len(current) == 1 && strings.HasPrefix(current[0].Comment, marker) {
+	if len(current) == 1 && strings.HasPrefix(current[0].Comment, marker) && strings.HasPrefix(current[0].Name, namePrefix) {
 		return false, nil // schon aktuell
 	}
 	ids := make([]string, 0, len(d.Tracks))
@@ -350,7 +358,7 @@ func updateDaylist(user string) (bool, error) {
 		tags += " #" + t
 	}
 	comment := fmt.Sprintf("%s · bis %s · %s%s", marker, d.End, d.Description, tags)
-	if _, err := writePlaylist(user, prevID, "Daylist · "+d.Name, comment, ids); err != nil {
+	if _, err := writePlaylist(user, prevID, namePrefix+"Daylist: "+d.Name, comment, ids); err != nil {
 		return false, err
 	}
 	pdk.Log(pdk.LogInfo, fmt.Sprintf("Daylist für %s: %s", user, d.Name))

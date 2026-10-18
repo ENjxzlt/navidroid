@@ -395,6 +395,8 @@ private fun PlaylistsList(app: NaviApp, nav: NavController) {
                     }
                 }
             }
+            // Mixe und Daylist als ein Ordner, nicht gleichrangig mit den eigenen Playlists
+            item { MixesFolderRow(app) { nav.navigate(Routes.MIXES) } }
             if (playlists.isEmpty()) item { Text("Noch keine Playlists.", color = Navi.Muted, modifier = Modifier.padding(20.dp)) }
             items(playlists, key = { it.id }) { pl ->
                 var menu by remember { mutableStateOf(false) }

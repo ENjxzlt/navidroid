@@ -58,7 +58,9 @@ class MixRepository(private val client: SubsonicClient?, private val artistGenre
             .sortedBy { if (it.name == "Lieblinge" || it.name == "Entdecken") 1 else 0 }
             .mapNotNull { pl ->
                 val songs = runCatching { c.playlist(pl.id).entry }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-                Mix("pl-${pl.id}", pl.name, pl.comment.orEmpty().substringAfter("täglich neu · ", ""), songs, hueOf(pl.name))
+                val base = pl.name.removePrefix("Mix · ")
+                val name = if (base == "Lieblinge" || base == "Entdecken") base else "$base Mix"
+                Mix("pl-${pl.id}", name, pl.comment.orEmpty().substringAfter("täglich neu · ", ""), songs, hueOf(name))
             }
             .takeIf { it.isNotEmpty() }
     }

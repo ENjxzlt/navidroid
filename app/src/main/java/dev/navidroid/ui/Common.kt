@@ -102,6 +102,7 @@ object Routes {
     const val DOWNLOADS = "downloads"
     const val DAYLIST = "daylist"
     const val ALBUM_EDIT = "album/{id}/edit"
+    const val MIXES = "mixes"
     const val TRASH = "trash"
     const val UPLOAD = "upload"
     const val OFFLINE_COLLECTION = "offline/{id}"
