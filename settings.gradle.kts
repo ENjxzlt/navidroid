@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "NaviDroid"
-include(":app")
+include(":app", ":core", ":desktop")

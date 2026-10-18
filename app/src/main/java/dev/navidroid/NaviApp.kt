@@ -57,7 +57,8 @@ class NaviApp : Application(), ImageLoaderFactory {
         session = SessionStore(this)
         settings = AppSettings(this)
         client = SubsonicClient(http, session)
-        lyrics = LyricsRepository(this, http, client)
+        val prefs = getSharedPreferences("settings", MODE_PRIVATE)
+        lyrics = LyricsRepository(http, client, filesDir, { prefs.getBoolean("lrclib", true) }, { prefs.edit().putBoolean("lrclib", it).apply() })
         covers = CoverFallback(client, http)
         mixes = MixRepository(client) { helper.artistGenres() }
         lidarrStore = LidarrStore(this)

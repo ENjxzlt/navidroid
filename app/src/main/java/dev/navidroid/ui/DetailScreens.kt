@@ -214,7 +214,7 @@ fun AlbumScreen(app: NaviApp, id: String, nav: NavController) {
                 }
                 item { Spacer(Modifier.height(8.dp)) }
                 itemsIndexed(album.song, key = { _, song -> song.id }) { i, song ->
-                    val number = song.track?.let { t -> if (multiDisc && song.discNumber != null) song.discNumber * 100 + t else t }
+                    val number = song.track?.let { t -> val d = song.discNumber; if (multiDisc && d != null) d * 100 + t else t }
                     SongRow(song, onClick = { playFrom(app, player, album.song, i) }, number = number)
                 }
             }

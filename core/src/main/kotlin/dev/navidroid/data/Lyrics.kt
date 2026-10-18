@@ -1,6 +1,6 @@
 package dev.navidroid.data
 
-import android.content.Context
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -122,16 +122,21 @@ data class SongRef(val id: String, val title: String, val artist: String?, val a
  * Lädt Songtexte zuerst von Navidrome, sonst (falls erlaubt) von LRCLIB.
  * Synchronisierte Texte werden bevorzugt.
  */
-class LyricsRepository(context: Context, private val http: OkHttpClient, private val client: SubsonicClient) {
-    private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+class LyricsRepository(
+    private val http: OkHttpClient,
+    private val client: SubsonicClient,
+    filesDir: File,
+    private val readOnline: () -> Boolean,
+    private val writeOnline: (Boolean) -> Unit,
+) {
     private val json = Json { ignoreUnknownKeys = true }
     private val cache = HashMap<String, Lyrics?>()
-    private val offlineDir = java.io.File(context.filesDir, "offline/lyrics")
+    private val offlineDir = File(filesDir, "offline/lyrics")
 
     var onlineLyrics: Boolean
-        get() = prefs.getBoolean("lrclib", true)
+        get() = readOnline()
         set(value) {
-            prefs.edit().putBoolean("lrclib", value).apply()
+            writeOnline(value)
             synchronized(cache) { cache.clear() }
         }
 

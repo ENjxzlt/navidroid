@@ -1,22 +1,12 @@
 package dev.navidroid.data
 
 import android.content.Context
-import java.security.MessageDigest
-import java.security.SecureRandom
 
-/** Subsonic-Token-Auth: Das Passwort selbst wird nie gespeichert, nur md5(passwort + salt) und das Salt. */
-data class Credentials(
-    val serverUrl: String,
-    val username: String,
-    val token: String,
-    val salt: String,
-)
-
-class SessionStore(context: Context) {
+class SessionStore(context: Context) : CredentialsSource {
     private val prefs = context.getSharedPreferences("session", Context.MODE_PRIVATE)
 
     @Volatile
-    var current: Credentials? = load()
+    override var current: Credentials? = load()
         private set
 
     fun save(credentials: Credentials) {
@@ -48,18 +38,9 @@ class SessionStore(context: Context) {
         private const val KEY_TOKEN = "token"
         private const val KEY_SALT = "salt"
 
-        fun createCredentials(serverUrl: String, username: String, password: String): Credentials {
-            val saltBytes = ByteArray(8).also { SecureRandom().nextBytes(it) }
-            val salt = saltBytes.toHex()
-            val token = MessageDigest.getInstance("MD5").digest((password + salt).toByteArray()).toHex()
-            return Credentials(normalizeUrl(serverUrl), username.trim(), token, salt)
-        }
+        fun createCredentials(serverUrl: String, username: String, password: String): Credentials =
+            Auth.createCredentials(serverUrl, username, password)
 
-        fun normalizeUrl(input: String): String {
-            val trimmed = input.trim().trimEnd('/')
-            return if ("://" in trimmed) trimmed else "https://$trimmed"
-        }
-
-        private fun ByteArray.toHex() = joinToString("") { "%02x".format(it) }
+        fun normalizeUrl(input: String): String = Auth.normalizeUrl(input)
     }
 }

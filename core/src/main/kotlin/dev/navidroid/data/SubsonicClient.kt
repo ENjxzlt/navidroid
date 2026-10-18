@@ -19,7 +19,7 @@ class SubsonicException(message: String) : IOException(message)
 /** Minimaler Client für die Subsonic-API, die Navidrome unter /rest bereitstellt. */
 class SubsonicClient(
     private val http: OkHttpClient,
-    private val session: SessionStore,
+    private val session: CredentialsSource,
 ) {
     private val json = Json {
         ignoreUnknownKeys = true

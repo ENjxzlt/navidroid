@@ -1,0 +1,40 @@
+name: Linux-Client
+
+on:
+  push:
+    tags: ["desktop-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: rpm-Werkzeuge
+        run: sudo apt-get update && sudo apt-get install -y rpm fakeroot
+      - name: Bauen
+        run: |
+          VERSION="${GITHUB_REF_NAME#desktop-v}"
+          ./gradlew --no-daemon :desktop:packageAppImage :desktop:packageDeb :desktop:packageRpm -PappVersionName="$VERSION"
+          mkdir -p dist
+          cp desktop/install.sh desktop/build/compose/binaries/main/app/
+          tar -C desktop/build/compose/binaries/main/app -czf "dist/navidroid-linux-$VERSION-x86_64.tar.gz" navidroid install.sh
+          cp desktop/build/compose/binaries/main/deb/*.deb dist/
+          cp desktop/build/compose/binaries/main/rpm/*.rpm dist/
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: NaviDroid für Linux ${{ github.ref_name }}
+          body: |
+            NaviDroid für Linux. Voraussetzung: VLC.
+            - Arch/CachyOS & alle anderen: `.tar.gz` entpacken, `./install.sh` ausführen.
+            - Debian/Ubuntu: `.deb`, Fedora/openSUSE: `.rpm`.
+          files: dist/*
+          make_latest: false
