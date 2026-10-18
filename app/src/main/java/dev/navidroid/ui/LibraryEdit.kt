@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -139,6 +140,7 @@ fun AlbumMenuButton(app: NaviApp, album: Album, nav: NavController, onAddToPlayl
     val context = LocalContext.current
     var menu by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     val canEdit = app.helper.configured
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -165,7 +167,8 @@ fun AlbumMenuButton(app: NaviApp, album: Album, nav: NavController, onAddToPlayl
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             if (canEdit) {
                 DropdownMenuItem(text = { Text("Album bearbeiten") }, onClick = { menu = false; nav.navigate("album/${album.id}/edit") })
-                DropdownMenuItem(text = { Text("Cover ändern") }, onClick = {
+                DropdownMenuItem(text = { Text("Cover suchen") }, onClick = { menu = false; searching = true })
+                DropdownMenuItem(text = { Text("Cover aus der Galerie") }, onClick = {
                     menu = false
                     picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 })
@@ -177,6 +180,67 @@ fun AlbumMenuButton(app: NaviApp, album: Album, nav: NavController, onAddToPlayl
         }
     }
     if (deleting) DeleteAlbumDialog(app, album, nav) { deleting = false }
+    if (searching) CoverSearchDialog(app, album) { searching = false }
+}
+
+/** Cover online suchen (Deezer, Apple Music, Cover Art Archive) und übernehmen. */
+@Composable
+private fun CoverSearchDialog(app: NaviApp, album: Album, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val loader = rememberLoad("covers:${album.id}") { app.helper.searchCovers(album.artist.orEmpty(), album.name) }
+    var saving by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = { if (saving == null) onDismiss() },
+        title = { Text("Cover für „${album.name}“") },
+        text = {
+            Box(Modifier.fillMaxWidth().height(420.dp)) {
+                when (val st = loader.state) {
+                    Load.Loading -> CenteredProgress()
+                    is Load.Err -> Text(st.message, color = MaterialTheme.colorScheme.error)
+                    is Load.Ok -> if (st.value.isEmpty()) {
+                        Text("Keine Cover gefunden.", color = Navi.Muted)
+                    } else {
+                        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                            columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            items(st.value.size) { i ->
+                                val hit = st.value[i]
+                                Column(
+                                    Modifier.clip(RoundedCornerShape(10.dp)).clickable(enabled = saving == null) {
+                                        saving = hit.url
+                                        MainScope().launch {
+                                            try {
+                                                app.helper.setAlbumCoverUrl(album.artist.orEmpty(), album.name, hit.url)
+                                                onDismiss()
+                                                Snack.show("Cover gespeichert – Navidrome liest es ein …")
+                                                rescanLibrary(app)
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                saving = null
+                                                Toast.makeText(context, e.message ?: "Cover konnte nicht gespeichert werden", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    },
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(10.dp)).background(Navi.Surface2)) {
+                                        coil.compose.AsyncImage(hit.url, hit.title, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                        if (saving == hit.url) CircularProgressIndicator(Modifier.align(Alignment.Center))
+                                    }
+                                    Text(hit.source, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                                    Text(hit.title, style = MaterialTheme.typography.bodySmall, color = Navi.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss, enabled = saving == null) { Text("Schließen") } },
+    )
 }
 
 @Composable

@@ -201,6 +201,9 @@ data class YtChannel(val id: String = "", val name: String = "")
 data class YtReleases(val working: Boolean = false, val channel: YtChannel? = null, val items: List<YtRelease> = emptyList())
 
 @Serializable
+data class CoverHit(val url: String, val source: String = "", val title: String = "", val artist: String = "", val size: Int = 0)
+
+@Serializable
 data class AlbumFilesInfo(val tracks: Int = 0, val bytes: Long = 0, val matched: Int = 0)
 
 @Serializable
@@ -570,6 +573,14 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
             client = slowHttp,
             raw = image.toRequestBody(mime.toMediaType()),
         )
+    }
+
+    suspend fun searchCovers(artist: String, album: String): List<CoverHit> =
+        decode(send(config(), "GET", "api/covers/search", query = mapOf("artist" to artist, "album" to album), client = slowHttp))
+
+    suspend fun setAlbumCoverUrl(artist: String, album: String, url: String) {
+        val body = buildJsonObject { put("artist", artist); put("album", album); put("url", url) }
+        send(config(), "POST", "api/library/album/cover-url", body.toString(), client = slowHttp)
     }
 
     suspend fun deleteAlbum(ref: AlbumRef, unmonitor: Boolean): LibraryDeleteResult {

@@ -38,11 +38,12 @@ from yt_dlp.version import __version__ as YTDLP_VERSION
 import ai
 import library
 import ma
+import covers
 import suggestions
 import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.9.0"
+VERSION = "1.10.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -1003,9 +1004,11 @@ def _yt_refresh(only: str | None = None) -> None:
         artists = [only] if only else _library_artists(files)[:40]
         with _yt_lock:
             channels = _yt_store().get("channels") or {}
-        found, channels = ytr.scan(artists, files, channels)
+            covers = dict(_yt_store().get("covers") or {})
+        found, channels = ytr.scan(artists, files, channels, covers=covers)
         with _yt_lock:
             store = _yt_store()
+            store["covers"] = {**(store.get("covers") or {}), **covers}
             per = store.get("perArtist") or {}
             if not only:
                 per = {}
@@ -1325,6 +1328,29 @@ def library_album_delete(req: AlbumDelete) -> dict:
         result = _trash.delete(req.ref.artist, req.ref.album, files)
     result["lidarr"] = _unmonitor_in_lidarr(req.ref.artist, req.ref.album) if req.unmonitor else False
     return result
+
+
+@app.get("/api/covers/search", dependencies=[Depends(require_token)])
+def covers_search(artist: str = Query(""), album: str = Query(...)) -> list[dict]:
+    return covers.search(artist, album)
+
+
+class CoverUrlRequest(BaseModel):
+    artist: str
+    album: str
+    url: str
+
+
+@app.post("/api/library/album/cover-url", dependencies=[Depends(require_token)])
+def library_album_cover_url(req: CoverUrlRequest) -> dict:
+    try:
+        image, mime = covers.download(req.url)
+    except (ValueError, requests.RequestException) as e:
+        raise HTTPException(400, f"Cover konnte nicht geladen werden: {e}") from e
+    files = _album_files(AlbumRef(artist=req.artist, album=req.album))
+    with _library_lock:
+        library.set_cover(_index, files, image, mime)
+    return {"tracks": len(files)}
 
 
 @app.get("/api/library/trash", dependencies=[Depends(require_token)])

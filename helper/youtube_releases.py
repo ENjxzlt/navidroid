@@ -143,8 +143,20 @@ def stable_hash(text: str) -> str:
     return hashlib.sha1(text.encode()).hexdigest()[:10]
 
 
-def scan(artists: list[str], library: list[dict], channels: dict[str, Any], extract: Extract = _ydl_extract) -> tuple[dict[str, list[dict]], dict[str, Any]]:
-    """Liefert (fehlende Releases je Künstler, aktualisierte Kanal-Zuordnung)."""
+def cover_for(playlist_id: str, extract: Extract = _ydl_extract) -> str | None:
+    """
+    Die Release-Liste enthält keine Vorschaubilder. Das Bild des ersten Titels ist bei YouTube Music
+    das Albumcover (16:9 mit dem quadratischen Cover in der Mitte – in der App mittig zugeschnitten).
+    """
+    res = extract(f"https://www.youtube.com/playlist?list={playlist_id}", {"playlistend": 1})
+    first = next((e for e in res.get("entries") or [] if e and e.get("id")), None)
+    return f"https://i.ytimg.com/vi/{first['id']}/maxresdefault.jpg" if first else None
+
+
+def scan(artists: list[str], library: list[dict], channels: dict[str, Any], extract: Extract = _ydl_extract,
+         covers: dict[str, str] | None = None) -> tuple[dict[str, list[dict]], dict[str, Any]]:
+    """Liefert (fehlende Releases je Künstler, aktualisierte Kanal-Zuordnung); [covers] wird ergänzt."""
+    covers = covers if covers is not None else {}
     found: dict[str, list[dict]] = {}
     channels = dict(channels)
     for artist in artists:
@@ -164,6 +176,13 @@ def scan(artists: list[str], library: list[dict], channels: dict[str, Any], extr
             continue
         items = combine(missing(rel, artist, library))
         for i in items:
+            if not i.get("cover"):
+                if i["playlistId"] not in covers:
+                    try:
+                        covers[i["playlistId"]] = cover_for(i["playlistId"], extract) or ""
+                    except Exception:
+                        pass
+                i["cover"] = covers.get(i["playlistId"]) or None
             i["artist"] = artist
             i["channel"] = ch.get("name")
         found[artist] = items

@@ -26,6 +26,8 @@ def fake(url, opts):
             {"id": "OLAK6", "title": "Wiener Schickeria (Live)"},
             {"id": "OLAK7", "title": "Bis Dato (Remixes)"},
         ]}
+    if "playlist?list=" in url:
+        return {"entries": [{"id": "vid" + url.rsplit("=", 1)[1]}]}
     if url.endswith("UCpa/releases"):
         return {"entries": [{"id": "OLAK9", "title": "Bushalte-Boogie"}, {"id": "OLAK5", "title": "Rocknrollst★r"},
                             {"id": "OLAK10", "title": "Bushalte-Boogie (Clean)"}]}
@@ -50,6 +52,7 @@ class YouTubeReleasesTest(unittest.TestCase):
         self.assertEqual([i["title"] for i in found["Bibiza"]], ["Rocknrollst★r", "Morgen hör ich auf! (Club Mixtape)"])
         self.assertEqual(found["Bibiza"][0]["key"], "yt:OLAK1")
         self.assertEqual(found["Bibiza"][0]["cover"], "a.jpg")
+        self.assertEqual(found["Bibiza"][1]["cover"], "https://i.ytimg.com/vi/vidOLAK3/maxresdefault.jpg")
         self.assertEqual([i["title"] for i in found["PA69"]], ["Bushalte-Boogie", "Rocknrollst★r"])
         self.assertEqual(found["PA69"][0]["alsoKeys"], ["yt:OLAK10"])  # Clean-Version zusammengefasst
         self.assertIs(channels["unbekannt"], False)  # gemerkt: kein Kanal, nicht jedes Mal neu suchen
