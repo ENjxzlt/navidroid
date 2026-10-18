@@ -47,6 +47,10 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.rounded.Bedtime
+import dev.navidroid.playback.SleepTimer
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -201,7 +205,10 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
     val accent = MaterialTheme.colorScheme.primary
     var showQueue by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var sleepDialog by remember { mutableStateOf(false) }
     val app = LocalContext.current.applicationContext as NaviApp
+    val context = LocalContext.current
+    if (sleepDialog) SleepTimerDialog { sleepDialog = false }
 
     // Musikvideo vom YouTube-Helfer (optional, in den Lidarr-Einstellungen aktivierbar)
     var videoUrl by remember { mutableStateOf<String?>(null) }
@@ -237,6 +244,25 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
             Box {
                 RoundIconButton(Icons.Rounded.MoreHoriz, "Weitere Optionen", { menu = true }, container = Color.White.copy(alpha = 0.08f))
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    s.mediaId?.let { songId ->
+                        DropdownMenuItem(
+                            text = { Text("Song-Radio starten") },
+                            leadingIcon = { Icon(Icons.Rounded.Radio, null) },
+                            onClick = {
+                                menu = false
+                                startRadio(
+                                    app, player,
+                                    dev.navidroid.data.Song(id = songId, title = s.title, artist = s.artist, album = s.album, albumId = s.albumId, artistId = s.artistId),
+                                    context,
+                                )
+                            },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(sleepTimerLabel()) },
+                        leadingIcon = { Icon(Icons.Rounded.Bedtime, null, tint = if (SleepTimer.active) MaterialTheme.colorScheme.primary else LocalContentColor.current) },
+                        onClick = { menu = false; sleepDialog = true },
+                    )
                     s.mediaId?.let { songId ->
                         DropdownMenuItem(
                             text = { Text("Zur Playlist hinzufügen …") },

@@ -20,6 +20,17 @@ data class SubsonicResponse(
     val randomSongs: SongList? = null,
     val lyricsList: LyricsList? = null,
     val scanStatus: ScanStatus? = null,
+    val similarSongs: SongList? = null,
+    val similarSongs2: SongList? = null,
+)
+
+/** OpenSubsonic: Lautstärke-Angaben aus den Tags (dB). */
+@Serializable
+data class ReplayGain(
+    val trackGain: Float? = null,
+    val albumGain: Float? = null,
+    val trackPeak: Float? = null,
+    val albumPeak: Float? = null,
 )
 
 @Serializable
@@ -81,6 +92,7 @@ data class Song(
     val genre: String? = null,
     val playCount: Long = 0,
     val played: String? = null,
+    val replayGain: ReplayGain? = null,
 )
 
 @Serializable

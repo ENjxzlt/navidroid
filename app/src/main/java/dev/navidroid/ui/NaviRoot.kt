@@ -55,6 +55,13 @@ fun NaviRoot(app: NaviApp) {
     UpdateDialog(updates)
     PlaylistBus.addRequest?.let { AddToPlaylistSheet(app, it) }
     if (DeviceBus.open) DevicesSheet(app)
+    // Vom Widget: direkt zur Daylist
+    LaunchedEffect(OpenBus.target, app.session.current) {
+        if (OpenBus.target == "daylist" && app.session.current != null) {
+            OpenBus.target = null
+            nav.navigate(Routes.DAYLIST)
+        }
+    }
 
     val fullScreen = route == Routes.PLAYER || route == Routes.LYRICS || route == Routes.LOGIN || route == Routes.PLAYLIST_EDIT || route == Routes.AI_PLAYLIST || route == Routes.ALBUM_EDIT
     val showMini = playerState.hasItem && route != null && !fullScreen
@@ -180,4 +187,9 @@ fun NaviRoot(app: NaviApp) {
         }
     }
     }
+}
+
+/** Ziel, das von außen (Widget) geöffnet werden soll. */
+object OpenBus {
+    var target by mutableStateOf<String?>(null)
 }

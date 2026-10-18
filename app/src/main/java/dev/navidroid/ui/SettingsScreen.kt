@@ -126,6 +126,9 @@ fun SettingsScreen(app: NaviApp, nav: NavController, onCheckUpdates: () -> Unit,
             Section("Wiedergabe") {
                 ValueRow("Streaming-Qualität WLAN", null, AppSettings.label(s.wifiBitrate)) { dialog = "wifi" }
                 ValueRow("Streaming-Qualität Mobil", "Spart Datenvolumen", AppSettings.label(s.mobileBitrate)) { dialog = "mobile" }
+                ToggleRow("Autoplay", "Nach dem letzten Titel mit ähnlicher Musik weiterspielen", s.autoplay) { s.autoplay = it }
+                ValueRow("Lautstärke-Ausgleich", "Laute Titel leiser machen (ReplayGain)", AppSettings.replayGainOptions.first { it.first == s.replayGain }.second) { dialog = "rg" }
+                ValueRow("Überblenden", "Nicht innerhalb eines Albums", AppSettings.crossfadeOptions.firstOrNull { it.first == s.crossfade }?.second ?: "${s.crossfade} s") { dialog = "xfade" }
             }
 
             Section("Downloads") {
@@ -207,6 +210,8 @@ fun SettingsScreen(app: NaviApp, nav: NavController, onCheckUpdates: () -> Unit,
     when (dialog) {
         "wifi" -> ChoiceDialog("Streaming-Qualität WLAN", AppSettings.bitrateOptions, s.wifiBitrate, { dialog = null }) { s.wifiBitrate = it }
         "dlquality" -> ChoiceDialog("Download-Qualität", AppSettings.bitrateOptions, app.offline.quality, { dialog = null }) { app.offline.quality = it }
+        "rg" -> ChoiceDialog("Lautstärke-Ausgleich", AppSettings.replayGainOptions, s.replayGain, { dialog = null }) { s.replayGain = it }
+        "xfade" -> ChoiceDialog("Überblenden", AppSettings.crossfadeOptions, s.crossfade, { dialog = null }) { s.crossfade = it }
         "mobile" -> ChoiceDialog("Streaming-Qualität Mobil", AppSettings.bitrateOptions, s.mobileBitrate, { dialog = null }) { s.mobileBitrate = it }
         "source" -> ChoiceDialog(
             "Beim Anfordern",

@@ -15,6 +15,9 @@ class AppSettings(context: Context) {
     private var _coverColors by mutableStateOf(prefs.getBoolean("coverColors", true))
     private var _maUrl by mutableStateOf(prefs.getString("maUrl", "") ?: "")
     private var _maToken by mutableStateOf(prefs.getString("maToken", "") ?: "")
+    private var _autoplay by mutableStateOf(prefs.getBoolean("autoplay", true))
+    private var _replayGain by mutableIntStateOf(prefs.getInt("replayGain", REPLAYGAIN_TRACK))
+    private var _crossfade by mutableIntStateOf(prefs.getInt("crossfade", 0))
 
     /** Höchste Bitrate in kbit/s im WLAN bzw. mobil; 0 = Originaldatei. */
     var wifiBitrate: Int
@@ -38,9 +41,29 @@ class AppSettings(context: Context) {
         get() = _maToken
         set(v) { _maToken = v; prefs.edit().putString("maToken", v).apply() }
 
+    /** Nach dem letzten Titel mit ähnlicher Musik weiterspielen. */
+    var autoplay: Boolean
+        get() = _autoplay
+        set(v) { _autoplay = v; prefs.edit().putBoolean("autoplay", v).apply() }
+
+    /** Lautstärke-Ausgleich: aus, pro Titel oder pro Album (ReplayGain-Tags). */
+    var replayGain: Int
+        get() = _replayGain
+        set(v) { _replayGain = v; prefs.edit().putInt("replayGain", v).apply() }
+
+    /** Überblenden zwischen Titeln in Sekunden, 0 = aus. */
+    var crossfade: Int
+        get() = _crossfade
+        set(v) { _crossfade = v; prefs.edit().putInt("crossfade", v).apply() }
+
     val maConfigured: Boolean get() = _maUrl.isNotBlank() && _maToken.isNotBlank()
 
     companion object {
+        const val REPLAYGAIN_OFF = 0
+        const val REPLAYGAIN_TRACK = 1
+        const val REPLAYGAIN_ALBUM = 2
+        val replayGainOptions = listOf(REPLAYGAIN_OFF to "Aus", REPLAYGAIN_TRACK to "Pro Titel", REPLAYGAIN_ALBUM to "Pro Album")
+        val crossfadeOptions = listOf(0 to "Aus", 2 to "2 Sekunden", 4 to "4 Sekunden", 6 to "6 Sekunden", 8 to "8 Sekunden", 12 to "12 Sekunden")
         val bitrateOptions = listOf(0 to "Original", 320 to "320 kbit/s", 256 to "256 kbit/s", 192 to "192 kbit/s", 128 to "128 kbit/s")
         fun label(kbps: Int) = bitrateOptions.firstOrNull { it.first == kbps }?.second ?: "$kbps kbit/s"
     }

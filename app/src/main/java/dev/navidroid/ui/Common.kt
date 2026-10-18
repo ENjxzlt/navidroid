@@ -542,6 +542,13 @@ fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boo
                     },
                 )
                 DropdownMenuItem(
+                    text = { Text("Song-Radio starten") },
+                    onClick = {
+                        menu = false
+                        startRadio(context.applicationContext as NaviApp, player, song, context)
+                    },
+                )
+                DropdownMenuItem(
                     text = { Text("Zur Playlist hinzufügen …") },
                     onClick = {
                         menu = false

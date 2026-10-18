@@ -2,4 +2,10 @@
     <string name="app_name">NaviDroid</string>
     <string name="downloads_channel">Downloads</string>
     <string name="downloads_channel_description">Fortschritt der Offline-Downloads</string>
+    <string name="widget_description">Was gerade läuft – mit Steuerung und Daylist</string>
+    <string name="widget_idle_title">NaviDroid</string>
+    <string name="widget_idle_subtitle">Tippen für die Daylist</string>
+    <string name="widget_play">Abspielen oder pausieren</string>
+    <string name="widget_next">Nächster Titel</string>
+    <string name="widget_daylist">Daylist öffnen</string>
 </resources>

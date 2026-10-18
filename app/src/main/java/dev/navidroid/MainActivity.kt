@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         val app = application as NaviApp
+        dev.navidroid.ui.OpenBus.target = intent?.getStringExtra(dev.navidroid.playback.NowPlayingWidget.EXTRA_OPEN)
         val connection = PlayerConnection(this, app.client, MusicAssistantBackend(app)).also { player = it }
         setContent {
             NaviTheme {
@@ -30,6 +31,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(dev.navidroid.playback.NowPlayingWidget.EXTRA_OPEN)?.let { dev.navidroid.ui.OpenBus.target = it }
     }
 
     override fun onDestroy() {

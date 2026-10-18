@@ -69,6 +69,10 @@ class PlaybackService : MediaSessionService() {
             .setSessionActivity(openApp)
             .build()
         Scrobbler(player, client, scope)
+        LoudnessAndFade(player, app.settings, scope)
+        Autoplay(player, app, scope)
+        SleepTimer.attach(player, scope)
+        NowPlayingWidget.attach(this, player, scope)
     }
 
     /**
@@ -81,22 +85,44 @@ class PlaybackService : MediaSessionService() {
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>,
         ): ListenableFuture<MutableList<MediaItem>> {
-            // Mobilfunk (getaktet) bekommt die mobile Qualität, sonst die WLAN-Qualität.
-            val cm = context.getSystemService(android.net.ConnectivityManager::class.java)
-            val bitrate = if (cm?.isActiveNetworkMetered == true) app.settings.mobileBitrate else app.settings.wifiBitrate
+            val bitrate = currentBitrate(app)
             return Futures.immediateFuture(
-                mediaItems.map { item ->
-                    item.buildUpon()
-                        .setUri(app.client.streamUrl(item.mediaId, bitrate))
-                        // Gleicher Schlüssel wie beim Download – dann liest der Player die Datei vom Gerät.
-                        .setCustomCacheKey(if (app.offline.isDownloaded(item.mediaId)) item.mediaId else null)
-                        .build()
-                }.toMutableList()
+                mediaItems.map { item -> withStream(app, item, bitrate) }.toMutableList()
             )
         }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+
+    // Knöpfe im Widget
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val player = session?.player
+        when (intent?.action) {
+            NowPlayingWidget.ACTION_TOGGLE -> player?.let {
+                if (it.isPlaying) it.pause() else {
+                    if (it.playbackState == Player.STATE_IDLE) it.prepare()
+                    it.play()
+                }
+            }
+            NowPlayingWidget.ACTION_NEXT -> player?.seekToNext()
+        }
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    companion object {
+        /** Mobilfunk (getaktet) bekommt die mobile Qualität, sonst die WLAN-Qualität. */
+        fun currentBitrate(app: NaviApp): Int {
+            val cm = app.getSystemService(android.net.ConnectivityManager::class.java)
+            return if (cm?.isActiveNetworkMetered == true) app.settings.mobileBitrate else app.settings.wifiBitrate
+        }
+
+        /** Stream-URL setzen; gleicher Cache-Schlüssel wie beim Download – dann liest der Player die Datei vom Gerät. */
+        fun withStream(app: NaviApp, item: MediaItem, bitrate: Int = currentBitrate(app)): MediaItem =
+            item.buildUpon()
+                .setUri(app.client.streamUrl(item.mediaId, bitrate))
+                .setCustomCacheKey(if (app.offline.isDownloaded(item.mediaId)) item.mediaId else null)
+                .build()
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = session?.player

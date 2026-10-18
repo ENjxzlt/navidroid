@@ -146,6 +146,13 @@ class SubsonicClient(
         return songs
     }
 
+    /** Ähnliche Titel (Navidrome: über Agenten/Plugin, z. B. Deezer-Radio); nur Titel aus der Bibliothek. */
+    suspend fun similarSongs(songId: String, count: Int = 50): List<Song> =
+        call("getSimilarSongs", "id" to songId, "count" to "$count").similarSongs?.song.orEmpty()
+
+    suspend fun similarSongsByArtist(artistId: String, count: Int = 50): List<Song> =
+        call("getSimilarSongs2", "id" to artistId, "count" to "$count").similarSongs2?.song.orEmpty()
+
     suspend fun randomSongs(size: Int = 50): List<Song> =
         call("getRandomSongs", "size" to "$size").randomSongs?.song.orEmpty()
 
