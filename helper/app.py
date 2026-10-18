@@ -44,7 +44,7 @@ import suggestions
 import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.16.0"
+VERSION = "1.17.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -1020,6 +1020,42 @@ def ai_translate(req: TranslateRequest) -> dict:
         return _cached(TRANSLATIONS_FILE, key, lambda: ai.translate_lyrics(DATA_DIR, req.artist, req.title, req.lines))
     except ai.AiError as e:
         raise HTTPException(502, str(e)) from e
+
+
+# ---- Einstellungen zwischen Handy und Desktop abgleichen ----
+
+USER_SETTINGS_FILE = DATA_DIR / "user_settings.json"
+_settings_lock = threading.Lock()
+
+
+class SettingsPut(BaseModel):
+    user: str
+    data: dict
+    updatedAt: int
+
+
+@app.get("/api/settings", dependencies=[Depends(require_token)])
+def get_user_settings(user: str = Query(...)) -> dict:
+    return (_read_json(USER_SETTINGS_FILE, {}).get(user.strip().lower())) or {"data": {}, "updatedAt": 0}
+
+
+@app.put("/api/settings", dependencies=[Depends(require_token)])
+def put_user_settings(req: SettingsPut) -> dict:
+    """Zusammenführen: neuere Werte gewinnen, Felder, die ein Gerät nicht kennt, bleiben erhalten."""
+    with _settings_lock:
+        store = _read_json(USER_SETTINGS_FILE, {})
+        key = req.user.strip().lower()
+        cur = store.get(key) or {"data": {}, "updatedAt": 0}
+        if req.updatedAt >= cur.get("updatedAt", 0):
+            cur = {"data": {**cur.get("data", {}), **req.data}, "updatedAt": req.updatedAt}
+        else:
+            cur = {"data": {**req.data, **cur.get("data", {})}, "updatedAt": cur["updatedAt"]}
+        store[key] = cur
+        tmp = USER_SETTINGS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(store))
+        tmp.chmod(0o600)
+        tmp.replace(USER_SETTINGS_FILE)
+    return cur
 
 
 # ---- Hörverlauf ----

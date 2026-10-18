@@ -79,6 +79,11 @@ fun SettingsScreen(app: NaviApp, nav: NavController, onCheckUpdates: () -> Unit,
     var videos by remember { mutableStateOf(app.helper.videosEnabled) }
     var source by remember { mutableStateOf(app.helper.requestSource) }
 
+    // Beim Verlassen: Einstellungen für den Linux-Client im Helfer ablegen
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { kotlinx.coroutines.MainScope().launch { app.settingsSync.push() } }
+    }
+
     LaunchedEffect(refresh) {
         val cfg = app.helperStore.config
         if (cfg == null) {

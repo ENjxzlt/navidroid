@@ -277,6 +277,7 @@ fun SettingsDialog(app: DesktopApp, onDismiss: () -> Unit) {
                             ))
                         } else app.lidarrStore.clear()
                         status = "Gespeichert"
+                        app.syncSettings(pushLocal = true)
                         app.version++
                         onDismiss()
                     } catch (e: Exception) {

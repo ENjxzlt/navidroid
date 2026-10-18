@@ -14,6 +14,7 @@ import dev.navidroid.lidarr.HelperStore
 import dev.navidroid.lidarr.LidarrClient
 import dev.navidroid.lidarr.LidarrStore
 import dev.navidroid.offline.OfflineManager
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -44,6 +45,8 @@ class NaviApp : Application(), ImageLoaderFactory {
         private set
     lateinit var uploads: dev.navidroid.upload.UploadManager
         private set
+    lateinit var settingsSync: dev.navidroid.data.SettingsSync
+        private set
 
     val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -71,6 +74,8 @@ class NaviApp : Application(), ImageLoaderFactory {
         offline = OfflineManager(this).also { it.start() }
         daylist = dev.navidroid.data.DaylistRepository(this)
         uploads = dev.navidroid.upload.UploadManager(this)
+        settingsSync = dev.navidroid.data.SettingsSync(this)
+        kotlinx.coroutines.MainScope().launch { settingsSync.sync() }
     }
 
     override fun newImageLoader(): ImageLoader =

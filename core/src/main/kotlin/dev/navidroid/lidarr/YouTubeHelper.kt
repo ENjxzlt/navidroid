@@ -589,6 +589,21 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
         send(config(), "POST", "api/library/quality/grab", buildJsonObject { put("guid", guid); put("indexerId", indexerId) }.toString())
     }
 
+    // ---- Einstellungen zwischen Geräten abgleichen ----
+
+    /** Gespeicherte Einstellungen des Benutzers und ihr Zeitstempel (ms); 0 = noch nie gespeichert. */
+    suspend fun getSettings(user: String): Pair<JsonObject, Long> {
+        val o = json.parseToJsonElement(send(config(), "GET", "api/settings", query = mapOf("user" to user))) as JsonObject
+        val data = o["data"] as? JsonObject ?: JsonObject(emptyMap())
+        val ts = (o["updatedAt"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull() ?: 0L
+        return data to ts
+    }
+
+    suspend fun putSettings(user: String, data: JsonObject, updatedAt: Long) {
+        val body = buildJsonObject { put("user", user); put("data", data); put("updatedAt", updatedAt) }
+        send(config(), "PUT", "api/settings", body.toString())
+    }
+
     // ---- Vorschläge ----
 
     suspend fun suggestions(): Suggestions = decode(send(config(), "GET", "api/suggestions", client = slowHttp))

@@ -47,6 +47,8 @@ data class DesktopSettings(
     val onlineLyrics: Boolean = true,
     val volume: Int = 80,
     val autoplay: Boolean = true,
+    /** Zeitstempel des letzten Abgleichs mit dem Handy (über den Helfer). */
+    val syncedAt: Long = 0,
 ) {
     companion object {
         private val file = File(Paths.config, "settings.json")

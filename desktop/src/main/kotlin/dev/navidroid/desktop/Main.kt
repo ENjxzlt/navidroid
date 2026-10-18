@@ -140,6 +140,36 @@ class DesktopApp {
         }
     }
 
+    /**
+     * Einstellungen mit dem Handy abgleichen (über den Helfer): neuere gewinnen.
+     * Der Desktop übernimmt Lidarr, Online-Songtexte und Autoplay; Handy-Werte wie Music Assistant bleiben erhalten.
+     */
+    suspend fun syncSettings(pushLocal: Boolean = false) {
+        val user = session.current?.username ?: return
+        if (!helper.configured) return
+        val (remote, ts) = runCatching { helper.getSettings(user) }.getOrNull() ?: return
+        if (!pushLocal && ts > settings.syncedAt) {
+            dev.navidroid.lidarr.SyncFormat.lidarr(remote["lidarr"] as? kotlinx.serialization.json.JsonObject)?.let { lidarrStore.save(it) }
+            with(dev.navidroid.lidarr.SyncFormat) {
+                updateSettings(settings.copy(
+                    onlineLyrics = remote.bool("onlineLyrics") ?: settings.onlineLyrics,
+                    autoplay = remote.bool("autoplay") ?: settings.autoplay,
+                    syncedAt = ts,
+                ))
+            }
+            version++
+        } else {
+            val now = System.currentTimeMillis()
+            val data = kotlinx.serialization.json.buildJsonObject {
+                remote.forEach { (k, v) -> put(k, v) }
+                lidarrStore.config?.let { put("lidarr", dev.navidroid.lidarr.SyncFormat.lidarr(it)) }
+                put("onlineLyrics", kotlinx.serialization.json.JsonPrimitive(settings.onlineLyrics))
+                put("autoplay", kotlinx.serialization.json.JsonPrimitive(settings.autoplay))
+            }
+            runCatching { helper.putSettings(user, data, now) }.onSuccess { updateSettings(settings.copy(syncedAt = now)) }
+        }
+    }
+
     fun updateSettings(s: DesktopSettings) {
         settings = s
         DesktopSettings.save(s)
@@ -258,6 +288,7 @@ private fun LoginScreen(app: DesktopApp) {
 
 @Composable
 private fun MainLayout(app: DesktopApp) {
+    LaunchedEffect(app.loggedIn) { runCatching { app.syncSettings() } }
     LaunchedEffect(Unit) {
         while (true) {
             runCatching { app.daylist.ensure() }
