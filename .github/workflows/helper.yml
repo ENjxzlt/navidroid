@@ -20,7 +20,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Tests
-        run: python3 helper/tests/test_matching.py
+        run: |
+          python3 helper/tests/test_matching.py
+          python3 helper/tests/test_audiobooks.py
 
       - uses: docker/setup-buildx-action@v3
 

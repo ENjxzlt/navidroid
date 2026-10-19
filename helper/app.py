@@ -30,12 +30,13 @@ from typing import Any
 import requests
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from mutagen.id3 import APIC, ID3, TALB, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX, ID3NoHeaderError
+from mutagen.id3 import APIC, ID3, TALB, TCON, TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX, ID3NoHeaderError
 from pydantic import BaseModel
 from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
 import ai
+import audiobooks
 import library
 import ma
 import covers
@@ -44,7 +45,7 @@ import suggestions
 import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.17.0"
+VERSION = "1.18.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -55,6 +56,8 @@ LIDARR_STAGING = os.environ.get("LIDARR_STAGING_DIR", str(STAGING)).rstrip("/")
 VIDEO_DIR = Path(os.environ.get("VIDEO_DIR", "/videos"))
 # Musikordner für den Import ohne Lidarr (Navidrome liest ihn ein). Leer = Funktion aus.
 MUSIC_DIR = Path(os.environ["MUSIC_DIR"]) if os.environ.get("MUSIC_DIR") else None
+# Hörspiele/Hörbücher: eigener Ordner = eigene Navidrome-Bibliothek (nicht unter MUSIC_DIR)
+AUDIOBOOK_DIR = Path(os.environ["AUDIOBOOK_DIR"]) if os.environ.get("AUDIOBOOK_DIR") else None
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 AUDIO_QUALITY = os.environ.get("AUDIO_QUALITY", "320")
 VIDEO_MAX_HEIGHT = int(os.environ.get("VIDEO_MAX_HEIGHT", "720"))
@@ -444,10 +447,13 @@ def _square_cover(url: str | None, workdir: Path) -> bytes | None:
 
 
 def run_manual_job(job: dict) -> None:
-    """Import ohne Lidarr: MP3s mit Tags direkt im Musikordner ablegen."""
-    if MUSIC_DIR is None:
-        raise RuntimeError("Import ohne Lidarr ist im Helfer nicht eingerichtet (MUSIC_DIR fehlt)")
+    """Import ohne Lidarr: MP3s mit Tags direkt im Musikordner (bzw. Hörspiel-Ordner) ablegen."""
     m = job["manual"]
+    audiobook = m.get("root") == "audiobook"
+    root = AUDIOBOOK_DIR if audiobook else MUSIC_DIR
+    if root is None:
+        raise RuntimeError("Hörspiel-Ordner ist im Helfer nicht eingerichtet (AUDIOBOOK_DIR fehlt)" if audiobook
+                           else "Import ohne Lidarr ist im Helfer nicht eingerichtet (MUSIC_DIR fehlt)")
     artist, album_name, year = m["artist"].strip(), m["album"].strip(), m.get("year")
     tracks = sorted(m["tracks"], key=lambda t: t["number"])
     total = len(tracks)
@@ -522,6 +528,8 @@ def run_manual_job(job: dict) -> None:
         tags.add(TPOS(encoding=3, text="1/1"))
         if year:
             tags.add(TDRC(encoding=3, text=str(year)))
+        if audiobook:
+            tags.add(TCON(encoding=3, text="Hörspiel"))
         if cover:
             tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover))
         tags.save(path, v2_version=3)
@@ -530,7 +538,7 @@ def run_manual_job(job: dict) -> None:
 
     # Ablegen – vorhandene Dateien werden nie überschrieben
     _update(job, "library", state="active")
-    folder = MUSIC_DIR / safe_name(artist) / safe_name(f"{album_name} ({year})" if year else album_name)
+    folder = root / safe_name(artist) / safe_name(f"{album_name} ({year})" if year else album_name)
     folder.mkdir(parents=True, exist_ok=True)
     if cover and not (folder / "cover.jpg").exists():
         (folder / "cover.jpg").write_bytes(cover)
@@ -655,7 +663,8 @@ def health() -> dict:
     except HTTPException as e:
         lidarr_version, lidarr_error = None, e.detail
     return {"version": VERSION, "ytDlp": YTDLP_VERSION, "lidarr": lidarr_version, "lidarrError": lidarr_error,
-            "ai": ai.configured(), "manual": MUSIC_DIR is not None, "library": MUSIC_DIR is not None}
+            "ai": ai.configured(), "manual": MUSIC_DIR is not None, "library": MUSIC_DIR is not None,
+            "audiobooks": AUDIOBOOK_DIR is not None}
 
 
 @app.post("/api/preview", dependencies=[Depends(require_token)])
@@ -1098,6 +1107,7 @@ class ManualJobRequest(BaseModel):
     year: int | None = None
     thumbnail: str | None = None
     tracks: list[ManualTrack]
+    root: str = "music"  # "audiobook" = Hörspiel-Ordner
 
 
 @app.post("/api/manual/preview", dependencies=[Depends(require_token)])
@@ -1114,7 +1124,9 @@ def manual_preview(req: ManualPreviewRequest) -> dict:
 
 @app.post("/api/manual/jobs", dependencies=[Depends(require_token)])
 def create_manual_job(req: ManualJobRequest) -> dict:
-    if MUSIC_DIR is None:
+    if req.root == "audiobook" and AUDIOBOOK_DIR is None:
+        raise HTTPException(400, "Hörspiel-Ordner ist im Helfer nicht eingerichtet (AUDIOBOOK_DIR)")
+    if req.root != "audiobook" and MUSIC_DIR is None:
         raise HTTPException(400, "Import ohne Lidarr ist im Helfer nicht eingerichtet (MUSIC_DIR)")
     if not is_youtube_url(req.url):
         raise HTTPException(400, "Bitte einen Link von youtube.com oder youtu.be angeben")
@@ -1134,7 +1146,7 @@ def create_manual_job(req: ManualJobRequest) -> dict:
         "videos": False,
         "mapping": [],
         "manual": {"artist": req.artist, "album": req.album, "year": req.year, "thumbnail": req.thumbnail,
-                   "tracks": [t.model_dump() for t in req.tracks]},
+                   "tracks": [t.model_dump() for t in req.tracks], "root": req.root},
         "steps": steps,
         "status": "queued",
         "error": None,
@@ -1254,25 +1266,27 @@ class ChannelRequest(BaseModel):
     channel: str  # Kanal-Link (…/channel/UC…, …/@name) oder leer = automatisch suchen
 
 
+def _channel_from_link(link: str, name: str) -> dict:
+    """Kanal aus einem Link (…/channel/UC…, …/@name) oder einem @Namen."""
+    m = re.search(r"(UC[0-9A-Za-z_-]{22})", link)
+    if m:
+        return {"id": m.group(1), "name": name}
+    if not is_youtube_url(link):
+        link = "https://www.youtube.com/@" + link.lstrip("@")
+    try:
+        info = ytr._ydl_extract(link, {"playlistend": 1})
+    except Exception as e:
+        raise HTTPException(400, f"Kanal nicht gefunden: {e}") from e
+    if not info.get("channel_id"):
+        raise HTTPException(400, "Kanal nicht gefunden")
+    return {"id": info["channel_id"], "name": info.get("channel") or name}
+
+
 @app.post("/api/youtube/channel", dependencies=[Depends(require_token)])
 def youtube_set_channel(req: ChannelRequest) -> dict:
     k = ytr.norm(req.artist)
-    ch: Any = None
     link = req.channel.strip()
-    if link:
-        m = re.search(r"(UC[0-9A-Za-z_-]{22})", link)
-        if m:
-            ch = {"id": m.group(1), "name": req.artist}
-        else:
-            if not is_youtube_url(link):
-                link = "https://www.youtube.com/@" + link.lstrip("@")
-            try:
-                info = ytr._ydl_extract(link, {"playlistend": 1})
-            except Exception as e:
-                raise HTTPException(400, f"Kanal nicht gefunden: {e}") from e
-            if not info.get("channel_id"):
-                raise HTTPException(400, "Kanal nicht gefunden")
-            ch = {"id": info["channel_id"], "name": info.get("channel") or req.artist}
+    ch: Any = _channel_from_link(link, req.artist) if link else None
     with _yt_lock:
         store = _yt_store()
         channels = store.get("channels") or {}
@@ -1301,6 +1315,148 @@ def youtube_release_import(req: KeyRequest) -> dict:
         url=item["url"], artist=(item.get("artists") or [item["artist"]])[0], album=item["title"], year=None,
         thumbnail=item.get("cover") or meta.get("thumbnail"), tracks=tracks,
     ))
+
+
+# ---- Hörspiel-Serien: neue Folgen automatisch von YouTube laden ----
+
+AUDIOBOOKS_FILE = DATA_DIR / "audiobooks.json"
+AUDIOBOOK_CHECK_HOURS = float(os.environ.get("AUDIOBOOK_CHECK_HOURS", "6"))
+_ab_lock = threading.Lock()
+_ab_working = threading.Event()
+
+
+def _ab_store() -> dict:
+    return _read_json(AUDIOBOOKS_FILE, {"series": []})
+
+
+def _ab_save(store: dict) -> None:
+    tmp = AUDIOBOOKS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(store))
+    tmp.replace(AUDIOBOOKS_FILE)
+
+
+def _need_audiobooks() -> Path:
+    if AUDIOBOOK_DIR is None:
+        raise HTTPException(400, "Hörspiel-Ordner ist im Helfer nicht eingerichtet (AUDIOBOOK_DIR)")
+    return AUDIOBOOK_DIR
+
+
+def _ab_import(series: dict, item: dict) -> None:
+    meta, entries = playlist_entries(item["url"])
+    if not entries:
+        raise RuntimeError("Die Playlist ist leer")
+    name = series["name"]
+    tracks = [ManualTrack(videoId=e["id"], title=clean_title(e["title"], name) or e["title"], number=e["index"]) for e in entries]
+    create_manual_job(ManualJobRequest(
+        url=item["url"], artist=name, album=item["title"], year=None,
+        thumbnail=item.get("cover") or meta.get("thumbnail"), tracks=tracks, root="audiobook",
+    ))
+
+
+def _ab_check(only: str | None = None) -> None:
+    """Alle (oder eine) Serien prüfen und Neues in die Warteschlange stellen."""
+    if AUDIOBOOK_DIR is None:
+        return
+    try:
+        with _ab_lock:
+            all_series = [x for x in _ab_store().get("series") or [] if only is None or x["id"] == only]
+        for series in all_series:
+            error = None
+            started: list[str] = []
+            try:
+                items = audiobooks.releases(series["channel"]["id"])
+                titles, numbers = audiobooks.present(AUDIOBOOK_DIR, series["name"], safe_name)
+                for item in audiobooks.due(series, items, titles, numbers):
+                    try:
+                        _ab_import(series, item)
+                        started.append(item["key"])
+                        log.info("Hörspiel: „%s“ – %s wird geladen", series["name"], item["title"])
+                    except Exception as e:
+                        error = f"{item['title']}: {friendly_error(e)}"
+            except Exception as e:
+                error = friendly_error(e)
+            with _ab_lock:
+                store = _ab_store()
+                for x in store.get("series") or []:
+                    if x["id"] == series["id"]:
+                        x["imported"] = list(dict.fromkeys((x.get("imported") or []) + started))
+                        x["lastCheck"] = int(time.time() * 1000)
+                        x["lastError"] = error
+                _ab_save(store)
+    except Exception:
+        log.exception("Hörspiele: Prüfung fehlgeschlagen")
+    finally:
+        if only is None:
+            _ab_working.clear()
+
+
+def _ab_loop() -> None:
+    time.sleep(60)
+    while True:
+        if not _ab_working.is_set():
+            _ab_working.set()
+            _ab_check()
+        time.sleep(AUDIOBOOK_CHECK_HOURS * 3600)
+
+
+if AUDIOBOOK_DIR:
+    threading.Thread(target=_ab_loop, daemon=True).start()
+
+
+@app.get("/api/audiobooks", dependencies=[Depends(require_token)])
+def audiobook_series() -> dict:
+    return {"enabled": AUDIOBOOK_DIR is not None, "working": _ab_working.is_set(),
+            "series": [audiobooks.public(x) for x in _ab_store().get("series") or []]}
+
+
+class SeriesRequest(BaseModel):
+    name: str
+    channel: str = ""             # Kanal-Link oder @Name; leer = nach dem Namen suchen
+    importExisting: bool = False  # True = auch die schon erschienenen Folgen laden
+
+
+@app.post("/api/audiobooks/series", dependencies=[Depends(require_token)])
+def audiobook_add_series(req: SeriesRequest) -> dict:
+    _need_audiobooks()
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(400, "Namen der Serie angeben")
+    link = req.channel.strip()
+    ch = _channel_from_link(link, name) if link else ytr.find_channel(name)
+    if not ch:
+        raise HTTPException(400, f"Kein offizieller YouTube-Kanal für „{name}“ gefunden – bitte Link angeben")
+    try:
+        items = audiobooks.releases(ch["id"])
+    except Exception as e:
+        raise HTTPException(400, f"Veröffentlichungen nicht lesbar: {friendly_error(e)}") from e
+    if not items:
+        raise HTTPException(400, f"Der Kanal „{ch['name']}“ hat keinen Reiter „Veröffentlichungen“")
+    series = audiobooks.new_series(name, ch, items, req.importExisting, uuid.uuid4().hex[:10], int(time.time() * 1000))
+    with _ab_lock:
+        store = _ab_store()
+        store["series"] = [x for x in store.get("series") or [] if ytr.norm(x["name"]) != ytr.norm(name)] + [series]
+        _ab_save(store)
+    if req.importExisting:
+        threading.Thread(target=_ab_check, args=(series["id"],), daemon=True).start()
+    return audiobooks.public(series)
+
+
+@app.delete("/api/audiobooks/series/{series_id}", dependencies=[Depends(require_token)])
+def audiobook_remove_series(series_id: str) -> dict:
+    with _ab_lock:
+        store = _ab_store()
+        store["series"] = [x for x in store.get("series") or [] if x["id"] != series_id]
+        _ab_save(store)
+    return {"ok": True}
+
+
+@app.post("/api/audiobooks/check", dependencies=[Depends(require_token)])
+def audiobook_check_now() -> dict:
+    _need_audiobooks()
+    if not _ab_working.is_set():
+        _ab_working.set()
+        threading.Thread(target=_ab_check, daemon=True).start()
+    return audiobook_series()
 
 
 class MaAuth(BaseModel):
