@@ -12,7 +12,8 @@ COPY requirements.txt .
 # yt-dlp bewusst ohne feste Version: YouTube ändert sich oft, neue Builds holen den aktuellen Stand.
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py matching.py ai.py ma.py library.py covers.py history.py suggestions.py youtube_releases.py ./
+# Alle Module (neue Dateien nicht vergessen können)
+COPY *.py ./
 
 RUN useradd --uid 1000 --create-home helper
 USER helper

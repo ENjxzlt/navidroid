@@ -387,6 +387,10 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
                 client.newCall(request).execute().use { resp ->
                     val text = resp.body?.string().orEmpty()
                     if (resp.code == 401) throw HelperException("Token wurde vom Helfer abgelehnt")
+                    // Unbekannter Pfad bzw. Methode: Der Helfer ist älter als die App
+                    if (resp.code == 405 || (resp.code == 404 && detail(text) == "Not Found")) {
+                        throw HelperException("Der Helfer ist zu alt für diese Funktion – bitte das Helfer-Image aktualisieren (docker compose pull && docker compose up -d)")
+                    }
                     if (!resp.isSuccessful) throw HelperException(detail(text) ?: "Helfer-Fehler (HTTP ${resp.code})")
                     text
                 }
