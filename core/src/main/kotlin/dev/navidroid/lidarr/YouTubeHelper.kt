@@ -62,6 +62,7 @@ data class HelperHealth(
     val ai: Boolean = false,
     val manual: Boolean = false,
     val library: Boolean = false,
+    val audiobooks: Boolean = false,
 )
 
 @Serializable
@@ -198,6 +199,38 @@ data class YtChannel(val id: String = "", val name: String = "")
 @Serializable
 data class YtReleases(val working: Boolean = false, val channel: YtChannel? = null, val items: List<YtRelease> = emptyList())
 
+/** Treffer der Suche nach einem offiziellen Musikvideo; [auto] = sicher genug für automatisches Laden. */
+@Serializable
+data class VideoCandidate(
+    val videoId: String,
+    val title: String = "",
+    val channel: String = "",
+    val seconds: Double? = null,
+    val thumbnail: String? = null,
+    val score: Int = 0,
+    val auto: Boolean = false,
+)
+
+/** Titel, zu dem ein Musikvideo nachgeladen werden soll; ohne [videoId] sucht der Helfer selbst. */
+data class VideoRequest(val song: dev.navidroid.data.Song, val videoId: String? = null)
+
+@Serializable
+private data class VideoStatus(val have: List<Boolean> = emptyList())
+
+/** Hörspiel-Serie, deren neue Folgen der Helfer automatisch von YouTube lädt. */
+@Serializable
+data class AudiobookSeries(
+    val id: String,
+    val name: String = "",
+    val channel: YtChannel? = null,
+    val imported: Int = 0,
+    val lastCheck: Long? = null,
+    val lastError: String? = null,
+)
+
+@Serializable
+data class AudiobookSeriesList(val enabled: Boolean = false, val working: Boolean = false, val series: List<AudiobookSeries> = emptyList())
+
 @Serializable
 data class CoverHit(val url: String, val source: String = "", val title: String = "", val artist: String = "", val size: Int = 0)
 
@@ -311,7 +344,8 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
 
     // coerceInputValues: null in Feldern mit Standardwert (z. B. Länge) nicht als Fehler behandeln
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; coerceInputValues = true }
-    private val videoCache = HashMap<String, String?>()
+    private val videoCache = HashMap<String, String>()
+    private val videoMissAt = HashMap<String, Long>()
 
     val configured: Boolean get() = store.config != null
 
@@ -627,6 +661,54 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     suspend fun setYoutubeChannel(artist: String, channel: String): YtReleases =
         decode(send(config(), "POST", "api/youtube/channel", buildJsonObject { put("artist", artist); put("channel", channel) }.toString(), client = slowHttp))
 
+    // ---- Musikvideos nachladen ----
+
+    private fun videoSongJson(song: dev.navidroid.data.Song, videoId: String? = null) = buildJsonObject {
+        put("artist", song.artist.orEmpty())
+        put("title", song.title)
+        put("album", song.album.orEmpty())
+        put("track", song.track ?: 0)
+        if (song.duration > 0) put("seconds", song.duration)
+        if (videoId != null) put("videoId", videoId)
+    }
+
+    /** Welche der Titel schon ein Video haben (gleiche Reihenfolge). */
+    suspend fun videoStatus(songs: List<dev.navidroid.data.Song>): List<Boolean> {
+        if (songs.isEmpty()) return emptyList()
+        val body = buildJsonObject { put("items", kotlinx.serialization.json.JsonArray(songs.map { videoSongJson(it) })) }
+        return decode<VideoStatus>(send(config(), "POST", "api/videos/status", body.toString())).have
+    }
+
+    suspend fun videoCandidates(song: dev.navidroid.data.Song): List<VideoCandidate> =
+        decode(send(config(), "POST", "api/videos/candidates", videoSongJson(song).toString(), client = slowHttp))
+
+    /** Musikvideos nachladen; erscheint als Auftrag unter Anfragen → Downloads. */
+    suspend fun fetchVideos(title: String, requests: List<VideoRequest>): HelperJob {
+        val body = buildJsonObject {
+            put("title", title)
+            put("items", kotlinx.serialization.json.JsonArray(requests.map { videoSongJson(it.song, it.videoId) }))
+        }
+        val job = decode<HelperJob>(send(config(), "POST", "api/videos/fetch", body.toString()))
+        // Gemerkte „kein Video“-Antworten verwerfen, damit der Player neue Videos findet
+        synchronized(videoCache) { videoMissAt.clear() }
+        return job
+    }
+
+    // ---- Hörspiel-Serien ----
+
+    suspend fun audiobookSeries(): AudiobookSeriesList = decode(send(config(), "GET", "api/audiobooks"))
+
+    suspend fun addAudiobookSeries(name: String, channel: String, importExisting: Boolean): AudiobookSeries =
+        decode(send(config(), "POST", "api/audiobooks/series", buildJsonObject {
+            put("name", name); put("channel", channel); put("importExisting", importExisting)
+        }.toString(), client = slowHttp))
+
+    suspend fun removeAudiobookSeries(id: String) {
+        send(config(), "DELETE", "api/audiobooks/series/$id")
+    }
+
+    suspend fun checkAudiobookSeries(): AudiobookSeriesList = decode(send(config(), "POST", "api/audiobooks/check", "{}"))
+
     // ---- Bibliothek bearbeiten ----
 
     private fun refJson(ref: AlbumRef) = buildJsonObject {
@@ -721,12 +803,18 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
         val cfg = store.config ?: return null
         if (!cfg.videos) return null
         val key = "$artist|$title"
-        synchronized(videoCache) { if (videoCache.containsKey(key)) return videoCache[key] }
+        synchronized(videoCache) {
+            videoCache[key]?.let { return it }
+            // „Kein Video“ nur kurz merken – es kann inzwischen nachgeladen worden sein
+            videoMissAt[key]?.let { if (System.currentTimeMillis() - it < 5 * 60_000L) return null }
+        }
         val result = runCatching {
             val match = decode<VideoMatch>(send(cfg, "GET", "api/videos/find", query = mapOf("artist" to artist, "title" to title)))
             cfg.url.trimEnd('/') + match.url
         }.getOrNull()
-        synchronized(videoCache) { videoCache[key] = result }
+        synchronized(videoCache) {
+            if (result != null) videoCache[key] = result else videoMissAt[key] = System.currentTimeMillis()
+        }
         return result
     }
 }

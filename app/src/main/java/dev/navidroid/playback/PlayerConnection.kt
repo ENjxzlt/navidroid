@@ -56,6 +56,7 @@ data class PlayerUiState(
     val currentIndex: Int = 0,
     val remote: RemoteTarget? = null,
     val remoteVolume: Int? = null,
+    val speed: Float = 1f,
 )
 
 /** UI-seitige Verbindung zum PlaybackService über einen MediaController. */
@@ -227,17 +228,19 @@ class PlayerConnection(context: Context, private val client: SubsonicClient, pri
             currentIndex = c.currentMediaItemIndex,
             remote = remote,
             remoteVolume = remoteVolume,
+            speed = c.playbackParameters.speed,
         ).let { st -> if (remote != null) st.copy(isPlaying = remotePlaying, isBuffering = false) else st }
     }
 
-    fun play(songs: List<Song>, startIndex: Int = 0, shuffle: Boolean = false) {
+    /** [startPositionMs]: z. B. die gemerkte Stelle einer Hörspiel-Folge. */
+    fun play(songs: List<Song>, startIndex: Int = 0, shuffle: Boolean = false, startPositionMs: Long = 0L) {
         val c = controller ?: return
         if (songs.isEmpty()) return
         c.shuffleModeEnabled = shuffle
         val start = if (shuffle) songs.indices.random() else startIndex.coerceIn(songs.indices)
-        c.setMediaItems(songs.map { it.toMediaItem() }, start, 0L)
+        c.setMediaItems(songs.map { it.toMediaItem() }, start, if (shuffle) 0L else startPositionMs)
         if (remote != null) {
-            sendQueueToRemote()
+            sendQueueToRemote(if (shuffle) 0L else startPositionMs)
             return
         }
         c.prepare()
@@ -326,6 +329,18 @@ class PlayerConnection(context: Context, private val client: SubsonicClient, pri
         val c = controller ?: return
         val start = c.currentMediaItemIndex + 1
         if (start < c.mediaItemCount) c.removeMediaItems(start, c.mediaItemCount)
+    }
+
+    /** Relativ springen (Hörspiele: ±30 s), innerhalb des Titels. */
+    fun seekBy(deltaMs: Long) {
+        val target = (positionMs + deltaMs).coerceAtLeast(0L)
+        val d = state.value.durationMs
+        seekTo(if (d > 0) target.coerceAtMost(d - 1_000L).coerceAtLeast(0L) else target)
+    }
+
+    /** Wiedergabegeschwindigkeit (der Dienst stellt sie bei Musik wieder auf 1,0). */
+    fun setSpeed(speed: Float) {
+        controller?.setPlaybackSpeed(speed)
     }
 
     fun toggleShuffle() {

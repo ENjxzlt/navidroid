@@ -108,6 +108,9 @@ object Routes {
     const val TRASH = "trash"
     const val UPLOAD = "upload"
     const val OFFLINE_COLLECTION = "offline/{id}"
+    const val AUDIOBOOKS = "audiobooks"
+    const val MUSIC_VIDEOS = "music-videos"
+    const val SERIES = "audiobooks/{id}"
 }
 
 fun NavController.openAlbum(id: String) = navigate("album/$id")
@@ -573,6 +576,9 @@ fun SongRow(song: Song, onClick: () -> Unit, number: Int? = null, showCover: Boo
                         Toast.makeText(context, "Zur Warteschlange hinzugefügt", Toast.LENGTH_SHORT).show()
                     },
                 )
+                if ((context.applicationContext as NaviApp).helper.configured) {
+                    DropdownMenuItem(text = { Text("Musikvideo laden …") }, onClick = { menu = false; VideoPickBus.song = song })
+                }
             }
         }
     }

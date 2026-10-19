@@ -85,9 +85,9 @@ class DaylistRepository(private val app: NaviApp) {
         if (!app.helper.configured) return null
         return try {
             val r = app.helper.aiDaylist(creds, moment.key, moment.prompt)
-            val songs = r.tracks.map { t ->
+            val songs = app.audiobooks.withoutAudiobooks(r.tracks.map { t ->
                 Song(id = t.id, title = t.title, artist = t.artist, album = t.album, albumId = t.albumId, coverArt = t.coverArt, duration = t.duration, year = t.year)
-            }
+            })
             if (songs.isEmpty()) null else Daylist(moment, r.name, r.description, r.tags, songs, byAi = true)
         } catch (e: CancellationException) {
             throw e

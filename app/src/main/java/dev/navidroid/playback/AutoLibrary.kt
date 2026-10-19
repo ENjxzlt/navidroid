@@ -101,7 +101,7 @@ class AutoLibrary(private val app: NaviApp, private val scope: CoroutineScope) :
             parentId == PLAYLISTS -> app.client.playlists().map { p ->
                 folder("playlist:${p.id}", p.name, "${p.songCount} Titel", app.client.coverArtUrl(p.coverArt, 300), playable = true, type = MediaMetadata.MEDIA_TYPE_PLAYLIST)
             }
-            parentId == ALBUMS -> (app.client.albumList("recent", 25, 0) + app.client.albumList("newest", 25, 0)).distinctBy { it.id }.map { a ->
+            parentId == ALBUMS -> app.audiobooks.albumsWithoutAudiobooks(app.client.albumList("recent", 25, 0) + app.client.albumList("newest", 25, 0)).distinctBy { it.id }.map { a ->
                 folder("album:${a.id}", a.name, a.artist, app.client.coverArtUrl(a.coverArt, 300), playable = true, type = MediaMetadata.MEDIA_TYPE_ALBUM)
             }
             parentId == DOWNLOADS -> app.offline.collections.map { c ->

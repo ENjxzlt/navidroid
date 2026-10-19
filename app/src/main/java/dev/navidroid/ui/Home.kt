@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -81,6 +82,8 @@ fun mixColor(hue: Float, lightness: Float = 0.26f): Color = Color(ColorUtils.HSL
 fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit, onOpenRequests: () -> Unit = {}) {
     var filter by rememberSaveable { mutableStateOf(HomeFilter.All) }
     val data = rememberLoad("home:${PlaylistBus.version}:${LibraryBus.version}") {
+        app.audiobooks.ensure()
+        val music = { list: List<Album> -> app.audiobooks.albumsWithoutAudiobooks(list) }
         coroutineScope {
             // „Zuletzt gespielt“ aus dem eigenen Hörverlauf; Navidrome zählt hier nicht mit
             val recent = async {
@@ -93,14 +96,18 @@ fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit, o
             val all = async { runCatching { app.client.albumList("alphabeticalByName", 500, 0) }.getOrDefault(emptyList()) }
             val playlists = async { runCatching { app.client.playlists() }.getOrDefault(emptyList()) }
             HomeData(
-                recent = recent.await(),
-                newest = newest.await(),
-                forgotten = all.await().filter { it.played != null }.sortedBy { it.played }.take(12),
+                recent = music(recent.await()),
+                newest = music(newest.await()),
+                forgotten = music(all.await()).filter { it.played != null }.sortedBy { it.played }.take(12),
                 playlists = playlists.await(),
             )
         }
     }
     val mixes = rememberLoad("mixes") { app.mixes.mixes() }
+    LaunchedEffect(Unit) {
+        app.audiobooks.ensure()
+        app.audiobooks.refreshBookmarks()
+    }
     val initial = app.session.current?.username?.firstOrNull()?.uppercase() ?: "?"
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
@@ -124,6 +131,8 @@ fun HomeStartTab(app: NaviApp, nav: NavController, onOpenSettings: () -> Unit, o
         }
 
         val d = (data.state as? Load.Ok)?.value
+        if (filter == HomeFilter.All && app.audiobooks.bookmarks.isNotEmpty()) item(key = "continue") { ContinueListeningRow(app) }
+
         if (filter != HomeFilter.Mixes) {
             if (d != null) {
                 val quick = (d.recent.take(6).map { QuickItem.AlbumItem(it) } + d.playlists.take(2).map { QuickItem.PlaylistItem(it) }).take(8)

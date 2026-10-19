@@ -22,6 +22,7 @@ fun Song.toMediaItem(client: SubsonicClient): MediaItem = MediaItem.Builder()
             .setTitle(title)
             .setArtist(artist)
             .setAlbumTitle(album)
+            .setTrackNumber(track)
             .setArtworkUri(client.coverArtUrl(coverArt, 600)?.toUri())
             // Unbekannte Länge (0) nicht vorgeben, sonst überdeckt sie die echte Länge aus der Datei.
             .setDurationMs(if (duration > 0) duration * 1000L else null)

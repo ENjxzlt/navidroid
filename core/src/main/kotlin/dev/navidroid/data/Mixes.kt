@@ -15,6 +15,8 @@ class MixRepository(
     private val artistGenres: suspend () -> Map<String, List<String>>,
     /** Eigene Wiedergabezahlen (Helfer), falls Navidrome nicht zählt. */
     private val playCounts: suspend () -> Map<String, Int> = { emptyMap() },
+    /** Album-IDs, die keine Musik sind (Hörspiel-Bibliothek) – kommen in keinen Mix. */
+    private val excludedAlbums: suspend () -> Set<String> = { emptySet() },
 ) {
     @Volatile
     private var cached: Pair<LocalDate, List<Mix>>? = null
@@ -29,7 +31,8 @@ class MixRepository(
         val today = LocalDate.now()
         lib?.let { (day, songs, genres) -> if (!force && day == today && songs.isNotEmpty()) return songs to genres }
         val counts = runCatching { playCounts() }.getOrDefault(emptyMap())
-        val songs = client?.allSongs().orEmpty().map { s -> counts[s.id]?.let { n -> if (n > s.playCount) s.copy(playCount = n.toLong()) else s } ?: s }
+        val excluded = runCatching { excludedAlbums() }.getOrDefault(emptySet())
+        val songs = client?.allSongs().orEmpty().filter { it.albumId !in excluded }.map { s -> counts[s.id]?.let { n -> if (n > s.playCount) s.copy(playCount = n.toLong()) else s } ?: s }
         // Ohne Genre-Tags in den Dateien: Genres des Künstlers aus Lidarr verwenden
         val genres = if (songs.any { !it.genre.isNullOrBlank() }) emptyMap() else artistGenres()
         lib = Triple(today, songs, genres)
@@ -63,7 +66,8 @@ class MixRepository(
         return lists
             .sortedBy { if (it.name == "Lieblinge" || it.name == "Entdecken") 1 else 0 }
             .mapNotNull { pl ->
-                val songs = runCatching { c.playlist(pl.id).entry }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                val excluded = runCatching { excludedAlbums() }.getOrDefault(emptySet())
+                val songs = runCatching { c.playlist(pl.id).entry.filter { it.albumId !in excluded } }.getOrNull()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
                 val base = pl.name.removePrefix("Mix · ")
                 val name = if (base == "Lieblinge" || base == "Entdecken") base else "$base Mix"
                 Mix("pl-${pl.id}", name, pl.comment.orEmpty().substringAfter("täglich neu · ", ""), songs, hueOf(name))

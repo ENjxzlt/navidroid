@@ -40,6 +40,7 @@ fun startRadio(app: NaviApp, player: PlayerConnection, seed: Song, context: Cont
             val similar = app.client.similarSongs(seed.id, 50).filter { it.id != seed.id }
                 .ifEmpty { seed.artistId?.let { app.client.similarSongsByArtist(it, 50) }.orEmpty().filter { it.id != seed.id } }
                 .filter { app.offline.online || app.offline.isDownloaded(it.id) }
+                .let { app.audiobooks.withoutAudiobooks(it) }
             if (similar.isEmpty()) {
                 Toast.makeText(context, "Keine ähnlichen Titel gefunden", Toast.LENGTH_SHORT).show()
                 return@launch

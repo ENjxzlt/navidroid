@@ -18,6 +18,7 @@ class AppSettings(context: Context) {
     private var _autoplay by mutableStateOf(prefs.getBoolean("autoplay", true))
     private var _replayGain by mutableIntStateOf(prefs.getInt("replayGain", REPLAYGAIN_TRACK))
     private var _crossfade by mutableIntStateOf(prefs.getInt("crossfade", 0))
+    private var _audiobookSpeed by androidx.compose.runtime.mutableFloatStateOf(prefs.getFloat("audiobookSpeed", 1f))
 
     /** Höchste Bitrate in kbit/s im WLAN bzw. mobil; 0 = Originaldatei. */
     var wifiBitrate: Int
@@ -56,6 +57,11 @@ class AppSettings(context: Context) {
         get() = _crossfade
         set(v) { _crossfade = v; prefs.edit().putInt("crossfade", v).apply() }
 
+    /** Wiedergabegeschwindigkeit für Hörspiele (Musik läuft immer mit 1,0). */
+    var audiobookSpeed: Float
+        get() = _audiobookSpeed
+        set(v) { _audiobookSpeed = v; prefs.edit().putFloat("audiobookSpeed", v).apply() }
+
     val maConfigured: Boolean get() = _maUrl.isNotBlank() && _maToken.isNotBlank()
 
     companion object {
@@ -65,6 +71,7 @@ class AppSettings(context: Context) {
         val replayGainOptions = listOf(REPLAYGAIN_OFF to "Aus", REPLAYGAIN_TRACK to "Pro Titel", REPLAYGAIN_ALBUM to "Pro Album")
         val crossfadeOptions = listOf(0 to "Aus", 2 to "2 Sekunden", 4 to "4 Sekunden", 6 to "6 Sekunden", 8 to "8 Sekunden", 12 to "12 Sekunden")
         val bitrateOptions = listOf(0 to "Original", 320 to "320 kbit/s", 256 to "256 kbit/s", 192 to "192 kbit/s", 128 to "128 kbit/s")
+        val speedOptions = listOf(0.8f, 1f, 1.1f, 1.25f, 1.5f, 1.75f, 2f)
         fun label(kbps: Int) = bitrateOptions.firstOrNull { it.first == kbps }?.second ?: "$kbps kbit/s"
     }
 }

@@ -22,7 +22,23 @@ data class SubsonicResponse(
     val scanStatus: ScanStatus? = null,
     val similarSongs: SongList? = null,
     val similarSongs2: SongList? = null,
+    val musicFolders: MusicFolders? = null,
+    val bookmarks: Bookmarks? = null,
 )
+
+/** Navidrome: jede Bibliothek ist ein „Musikordner“. */
+@Serializable
+data class MusicFolders(val musicFolder: List<MusicFolder> = emptyList())
+
+@Serializable
+data class MusicFolder(val id: Int, val name: String = "")
+
+@Serializable
+data class Bookmarks(val bookmark: List<Bookmark> = emptyList())
+
+/** Gemerkte Hörposition (ms) – auf dem Server, gilt also auf allen Geräten. */
+@Serializable
+data class Bookmark(val position: Long = 0, val changed: String? = null, val entry: Song)
 
 /** OpenSubsonic: Lautstärke-Angaben aus den Tags (dB). */
 @Serializable

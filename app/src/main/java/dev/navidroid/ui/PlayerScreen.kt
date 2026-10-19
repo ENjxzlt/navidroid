@@ -1,5 +1,11 @@
 package dev.navidroid.ui
 
+import androidx.compose.material.icons.rounded.SmartDisplay
+import dev.navidroid.data.AppSettings
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.material.icons.rounded.Forward30
+import androidx.compose.material.icons.rounded.Replay30
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -212,6 +218,8 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
     if (sleepDialog) SleepTimerDialog { sleepDialog = false }
     var infoDialog by remember { mutableStateOf(false) }
     if (infoDialog) SongInfoDialog(app, s.artist.orEmpty(), s.title, s.album) { infoDialog = false }
+    val audiobook = app.audiobooks.isAudiobook(s.albumId)
+    var speedMenu by remember { mutableStateOf(false) }
 
     // Musikvideo vom YouTube-Helfer (optional, in den Lidarr-Einstellungen aktivierbar)
     var videoUrl by remember { mutableStateOf<String?>(null) }
@@ -288,6 +296,19 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
                             },
                         )
                     }
+                    if (s.mediaId != null && videoUrl == null && app.helper.configured && !audiobook) {
+                        DropdownMenuItem(
+                            text = { Text("Musikvideo laden …") },
+                            leadingIcon = { Icon(Icons.Rounded.SmartDisplay, null) },
+                            onClick = {
+                                menu = false
+                                VideoPickBus.song = dev.navidroid.data.Song(
+                                    id = s.mediaId!!, title = s.title, artist = s.artist, album = s.album, albumId = s.albumId,
+                                    duration = (s.durationMs / 1000).toInt(),
+                                )
+                            },
+                        )
+                    }
                     s.albumId?.let { id ->
                         DropdownMenuItem(
                             text = { Text("Zum Album") },
@@ -349,7 +370,11 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
         PlaybackProgress(s, soft)
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = player::toggleShuffle, modifier = Modifier.size(48.dp)) {
+            if (audiobook) {
+                IconButton(onClick = { player.seekBy(-30_000) }, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Rounded.Replay30, "30 Sekunden zurück", tint = Color.White, modifier = Modifier.size(30.dp))
+                }
+            } else IconButton(onClick = player::toggleShuffle, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Rounded.Shuffle, "Zufällige Wiedergabe", tint = if (s.shuffle) accent else soft)
             }
             IconButton(onClick = player::previous, modifier = Modifier.size(56.dp)) {
@@ -359,7 +384,11 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
             IconButton(onClick = player::next, modifier = Modifier.size(56.dp)) {
                 Icon(Icons.Rounded.SkipNext, "Nächster Titel", tint = Color.White, modifier = Modifier.size(36.dp))
             }
-            IconButton(onClick = player::cycleRepeat, modifier = Modifier.size(48.dp)) {
+            if (audiobook) {
+                IconButton(onClick = { player.seekBy(30_000) }, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Rounded.Forward30, "30 Sekunden vor", tint = Color.White, modifier = Modifier.size(30.dp))
+                }
+            } else IconButton(onClick = player::cycleRepeat, modifier = Modifier.size(48.dp)) {
                 Icon(
                     if (s.repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                     "Wiederholen",
@@ -369,18 +398,26 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            BottomPill(Icons.Rounded.Lyrics, "Songtext", onOpenLyrics, Modifier.weight(1f))
-            BottomPill(Icons.AutoMirrored.Rounded.QueueMusic, "Warteschlange", { showQueue = true }, Modifier.weight(1f))
-            Surface(
-                onClick = { DeviceBus.open = true },
-                shape = RoundedCornerShape(16.dp),
-                color = if (s.remote != null) accent else Color.White.copy(alpha = 0.08f),
-                modifier = Modifier.size(56.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Devices, "Geräte", tint = if (s.remote != null) MaterialTheme.colorScheme.onPrimary else Color.White)
+            if (audiobook) {
+                // Hörspiele: Tempo und Einschlaf-Timer statt Songtext
+                Box(Modifier.weight(1f)) {
+                    TextPill(speedLabel(s.speed), "Geschwindigkeit", { speedMenu = true }, Modifier.fillMaxWidth(), active = s.speed != 1f)
+                    DropdownMenu(expanded = speedMenu, onDismissRequest = { speedMenu = false }) {
+                        AppSettings.speedOptions.forEach { v ->
+                            DropdownMenuItem(text = { Text(speedLabel(v)) }, onClick = { speedMenu = false; player.setSpeed(v) })
+                        }
+                    }
                 }
-            }
+                BottomPill(Icons.Rounded.Bedtime, "Einschlaf-Timer", { sleepDialog = true }, Modifier.weight(1f), active = SleepTimer.active)
+            } else BottomPill(Icons.Rounded.Lyrics, "Songtext", onOpenLyrics, Modifier.weight(1f))
+            BottomPill(Icons.AutoMirrored.Rounded.QueueMusic, "Warteschlange", { showQueue = true }, Modifier.weight(1f))
+            BottomPill(
+                Icons.Rounded.Devices,
+                "Geräte",
+                { DeviceBus.open = true },
+                Modifier.weight(1f),
+                active = s.remote != null,
+            )
         }
         if (s.remote != null) {
             Text(
@@ -422,24 +459,40 @@ private fun SongVideoToggle(video: Boolean, tint: Color, soft: Color, onChange: 
     }
 }
 
+private fun speedLabel(v: Float): String =
+    String.format(java.util.Locale.GERMANY, if (Math.round(v * 100) % 10 == 0) "%.1f×" else "%.2f×", v)
+
+/** Wie [BottomPill], aber mit kurzem Text statt Symbol (z. B. „1,25×“). */
 @Composable
-private fun BottomPill(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier) {
-    val full = MaterialTheme.typography.labelLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize)
-    // Immer einzeilig: passt das Wort nicht (schmales Handy, große Systemschrift), wird die Schrift kleiner statt umzubrechen.
-    var style by remember(label, full) { mutableStateOf(full) }
-    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.08f), modifier = modifier.height(56.dp)) {
-        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = Color.White)
-            Spacer(Modifier.width(8.dp))
+private fun TextPill(text: String, description: String, onClick: () -> Unit, modifier: Modifier, active: Boolean = false) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (active) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f),
+        modifier = modifier.height(56.dp).semantics { contentDescription = "$description $text" },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
             Text(
-                label,
-                style = style,
-                color = Color.White,
+                text,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (active) MaterialTheme.colorScheme.onPrimary else Color.White,
                 maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-                onTextLayout = { if (it.hasVisualOverflow && style.fontSize.value > 11f) style = style.copy(fontSize = style.fontSize * 0.92f) },
             )
+        }
+    }
+}
+
+/** Knopf unter dem Player: nur Symbol, die Beschriftung ist die Bedienhilfe. [active] = Akzentfarbe. */
+@Composable
+private fun BottomPill(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier, active: Boolean = false) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (active) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f),
+        modifier = modifier.height(56.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, label, tint = if (active) MaterialTheme.colorScheme.onPrimary else Color.White)
         }
     }
 }

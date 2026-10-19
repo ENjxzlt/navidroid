@@ -55,6 +55,7 @@ fun NaviRoot(app: NaviApp) {
     UpdateDialog(updates)
     PlaylistBus.addRequest?.let { AddToPlaylistSheet(app, it) }
     if (DeviceBus.open) DevicesSheet(app)
+    VideoPickBus.song?.let { song -> VideoPickDialog(app, song) { VideoPickBus.song = null } }
     // Vom Widget: direkt zur Daylist
     LaunchedEffect(OpenBus.target, app.session.current) {
         if (OpenBus.target == "daylist" && app.session.current != null) {
@@ -185,6 +186,9 @@ fun NaviRoot(app: NaviApp) {
             composable(Routes.QUALITY) { QualityScreen(app, nav) }
             composable(Routes.UPLOAD) { UploadScreen(app, nav) }
             composable(Routes.OFFLINE_COLLECTION) { e -> OfflineCollectionScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
+            composable(Routes.MUSIC_VIDEOS) { MusicVideosScreen(app, nav) }
+            composable(Routes.AUDIOBOOKS) { AudiobooksScreen(app, nav) }
+            composable(Routes.SERIES) { e -> SeriesScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.LYRICS) { LyricsScreen(app, onClose = { nav.popBackStack() }) }
         }
     }
