@@ -33,4 +33,4 @@ jobs:
       - name: Helfer-Image startet
         run: |
           docker build -q -t helper-check helper
-          docker run --rm -e HELPER_TOKEN=t -e LIDARR_URL=http://x -e LIDARR_API_KEY=k -e DATA_DIR=/tmp helper-check python -c "import app"
+          docker run --rm -e HELPER_TOKEN=t -e LIDARR_URL=http://x -e LIDARR_API_KEY=k -e DATA_DIR=/tmp -e STAGING_DIR=/tmp/staging -e VIDEO_DIR=/tmp/videos helper-check python -c "import app"
