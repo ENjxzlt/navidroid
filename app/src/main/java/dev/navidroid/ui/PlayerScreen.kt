@@ -424,11 +424,22 @@ private fun SongVideoToggle(video: Boolean, tint: Color, soft: Color, onChange: 
 
 @Composable
 private fun BottomPill(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier) {
+    val full = MaterialTheme.typography.labelLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize)
+    // Immer einzeilig: passt das Wort nicht (schmales Handy, große Systemschrift), wird die Schrift kleiner statt umzubrechen.
+    var style by remember(label, full) { mutableStateOf(full) }
     Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.08f), modifier = modifier.height(56.dp)) {
-        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, tint = Color.White)
-            Spacer(Modifier.width(10.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize), color = Color.White)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                label,
+                style = style,
+                color = Color.White,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                onTextLayout = { if (it.hasVisualOverflow && style.fontSize.value > 11f) style = style.copy(fontSize = style.fontSize * 0.92f) },
+            )
         }
     }
 }

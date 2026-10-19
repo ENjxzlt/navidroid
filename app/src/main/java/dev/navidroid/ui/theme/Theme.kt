@@ -11,6 +11,8 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import dev.navidroid.R
@@ -70,17 +72,23 @@ private fun TextStyle.m(weight: FontWeight, size: Int? = null, tracking: Double?
     letterSpacing = tracking?.em ?: letterSpacing,
 )
 
+/**
+ * Für Überschriften: ausgewogene Zeilen und Silbentrennung (Sprache des Geräts) statt harter Brüche
+ * mitten im Wort – lange deutsche Komposita wie „Indie-Rock-Montagnachmittag“ passen sonst nicht.
+ */
+private fun TextStyle.heading() = copy(lineBreak = LineBreak.Heading, hyphens = Hyphens.Auto)
+
 private val base = Typography()
 private val typography = Typography(
-    displayLarge = base.displayLarge.m(FontWeight.ExtraBold, tracking = -0.02),
-    displayMedium = base.displayMedium.m(FontWeight.ExtraBold, tracking = -0.02),
-    displaySmall = base.displaySmall.m(FontWeight.ExtraBold, tracking = -0.02),
-    headlineLarge = base.headlineLarge.m(FontWeight.ExtraBold, 30, -0.02),
-    headlineMedium = base.headlineMedium.m(FontWeight.ExtraBold, 28, -0.02),
-    headlineSmall = base.headlineSmall.m(FontWeight.ExtraBold, 26, -0.02),
-    titleLarge = base.titleLarge.m(FontWeight.Bold, 19, -0.01),
-    titleMedium = base.titleMedium.m(FontWeight.Bold, 16),
-    titleSmall = base.titleSmall.m(FontWeight.SemiBold, 14),
+    displayLarge = base.displayLarge.m(FontWeight.ExtraBold, tracking = -0.02).heading(),
+    displayMedium = base.displayMedium.m(FontWeight.ExtraBold, tracking = -0.02).heading(),
+    displaySmall = base.displaySmall.m(FontWeight.ExtraBold, tracking = -0.02).heading(),
+    headlineLarge = base.headlineLarge.m(FontWeight.ExtraBold, 30, -0.02).heading(),
+    headlineMedium = base.headlineMedium.m(FontWeight.ExtraBold, 28, -0.02).heading(),
+    headlineSmall = base.headlineSmall.m(FontWeight.ExtraBold, 26, -0.02).heading(),
+    titleLarge = base.titleLarge.m(FontWeight.Bold, 19, -0.01).heading(),
+    titleMedium = base.titleMedium.m(FontWeight.Bold, 16).heading(),
+    titleSmall = base.titleSmall.m(FontWeight.SemiBold, 14).heading(),
     bodyLarge = base.bodyLarge.m(FontWeight.Medium, 15),
     bodyMedium = base.bodyMedium.m(FontWeight.Medium, 14),
     bodySmall = base.bodySmall.m(FontWeight.Medium, 12),
