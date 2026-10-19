@@ -171,3 +171,80 @@ object SleepTimer {
         }
     }
 }
+
+/**
+ * Zufallswiedergabe, bei der die Warteschlange stimmt: Statt intern eine verdeckte Reihenfolge zu
+ * würfeln, wird beim Einschalten die Liste selbst gemischt (aktueller Titel vorne, alle übrigen
+ * zufällig dahinter); ExoPlayer spielt mit einer festen Reihenfolge immer genau die Liste ab. Damit
+ * zeigt die Warteschlange, was wirklich als Nächstes kommt, und Verschieben/„Als Nächstes“ wirken auch
+ * bei Zufall. Beim Ausschalten kommt die ursprüngliche Reihenfolge zurück.
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+class ShuffleQueue(private val player: androidx.media3.exoplayer.ExoPlayer) : Player.Listener {
+    /** Reihenfolge vor dem Mischen. */
+    private var original: List<MediaItem> = emptyList()
+    private var busy = false
+
+    init {
+        player.setShuffleOrder(androidx.media3.exoplayer.source.ShuffleOrder.UnshuffledShuffleOrder(player.mediaItemCount))
+        player.addListener(this)
+        if (player.shuffleModeEnabled) shuffle()
+    }
+
+    override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+        if (busy) return
+        if (shuffleModeEnabled) shuffle() else restore()
+    }
+
+    override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+        if (busy || !player.shuffleModeEnabled || reason != Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) return
+        // Ganz neue Liste bei eingeschaltetem Zufall (z. B. aus Android Auto): ebenfalls mischen.
+        val items = items()
+        if (items.isNotEmpty() && items.none { it in original }) shuffle()
+    }
+
+    private fun items() = (0 until player.mediaItemCount).map { player.getMediaItemAt(it) }
+
+    private fun shuffle() {
+        val items = items()
+        original = items
+        if (items.size < 2) return
+        val cur = player.currentMediaItemIndex.coerceIn(items.indices)
+        val rest = items.filterIndexed { i, _ -> i != cur }.shuffled()
+        edit(cur, emptyList(), rest)
+    }
+
+    private fun restore() {
+        val items = items()
+        val orig = original
+        original = emptyList()
+        if (items.size < 2 || orig.isEmpty()) return
+        val cur = player.currentMediaItemIndex.coerceIn(items.indices)
+        val current = items[cur]
+        // Neu hinzugekommene Titel: direkt hinter dem aktuellen = „Als Nächstes“ (bleibt dort), sonst ans Ende.
+        val left = orig.toMutableList()
+        val known = items.map { left.remove(it) }
+        val playNext = items.indices.drop(cur + 1).takeWhile { !known[it] }.map { items[it] }
+        val appended = items.indices.filter { !known[it] && it != cur && items[it] !in playNext }.map { items[it] }
+        val kept = items.filterIndexed { i, _ -> known[i] }.toMutableList()
+        // Ursprüngliche Reihenfolge der noch vorhandenen Titel
+        val ordered = orig.filter { kept.remove(it) }
+        val pos = ordered.indexOf(current)
+        val before = if (pos >= 0) ordered.take(pos) else emptyList()
+        val after = if (pos >= 0) ordered.drop(pos + 1) else ordered.filter { it != current }
+        edit(cur, before, playNext + after + appended)
+    }
+
+    /** Ordnet die Liste um den laufenden Titel herum neu, ohne ihn anzutasten (kein Aussetzer). */
+    private fun edit(cur: Int, before: List<MediaItem>, after: List<MediaItem>) {
+        busy = true
+        try {
+            if (cur + 1 < player.mediaItemCount) player.removeMediaItems(cur + 1, player.mediaItemCount)
+            if (cur > 0) player.removeMediaItems(0, cur)
+            if (after.isNotEmpty()) player.addMediaItems(1, after)
+            if (before.isNotEmpty()) player.addMediaItems(0, before)
+        } finally {
+            busy = false
+        }
+    }
+}

@@ -71,6 +71,7 @@ class PlaybackService : MediaLibraryService() {
             .build()
         Scrobbler(player, client, scope) { item, ts -> recordHistory(app, item, ts) }
         LoudnessAndFade(player, app.settings, scope)
+        ShuffleQueue(player)
         Autoplay(player, app, scope)
         SleepTimer.attach(player, scope)
         NowPlayingWidget.attach(this, player, scope)
