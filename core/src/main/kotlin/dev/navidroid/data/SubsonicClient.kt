@@ -82,11 +82,36 @@ class SubsonicClient(
         call("ping", creds = creds)
     }
 
-    suspend fun albumList(type: String, size: Int, offset: Int): List<Album> =
-        call("getAlbumList2", "type" to type, "size" to "$size", "offset" to "$offset")
+    suspend fun albumList(type: String, size: Int, offset: Int, musicFolderId: Int? = null): List<Album> =
+        call("getAlbumList2", "type" to type, "size" to "$size", "offset" to "$offset", "musicFolderId" to musicFolderId?.toString())
             .albumList2?.album.orEmpty()
 
-    suspend fun artists(): List<ArtistIndex> = call("getArtists").artists?.index.orEmpty()
+    suspend fun artists(musicFolderId: Int? = null): List<ArtistIndex> =
+        call("getArtists", "musicFolderId" to musicFolderId?.toString()).artists?.index.orEmpty()
+
+    /** Bibliotheken (Navidrome: Musik, Hörspiele, …). */
+    suspend fun musicFolders(): List<MusicFolder> = call("getMusicFolders").musicFolders?.musicFolder.orEmpty()
+
+    /** Alle Alben einer Bibliothek (seitenweise). */
+    suspend fun allAlbums(musicFolderId: Int, limit: Int = 5000): List<Album> {
+        val albums = mutableListOf<Album>()
+        while (albums.size < limit) {
+            val page = albumList("alphabeticalByName", 500, albums.size, musicFolderId)
+            albums += page
+            if (page.size < 500) break
+        }
+        return albums
+    }
+
+    suspend fun bookmarks(): List<Bookmark> = call("getBookmarks").bookmarks?.bookmark.orEmpty()
+
+    suspend fun createBookmark(songId: String, positionMs: Long) {
+        call("createBookmark", "id" to songId, "position" to "$positionMs")
+    }
+
+    suspend fun deleteBookmark(songId: String) {
+        call("deleteBookmark", "id" to songId)
+    }
 
     suspend fun artist(id: String): Artist =
         call("getArtist", "id" to id).artist ?: throw SubsonicException("Künstler nicht gefunden")

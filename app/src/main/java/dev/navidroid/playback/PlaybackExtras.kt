@@ -101,6 +101,8 @@ class Autoplay(private val player: Player, private val app: NaviApp, private val
     private fun check() {
         if (!app.settings.autoplay || player.repeatMode != Player.REPEAT_MODE_OFF || player.hasNextMediaItem()) return
         val item = player.currentMediaItem ?: return
+        // Nach einer Hörspiel-Folge keine „ähnliche Musik“
+        if (app.audiobooks.isAudiobook(item.mediaMetadata.extras?.getString(EXTRA_ALBUM_ID))) return
         if (item.mediaId == lastSeed || job?.isActive == true) return
         lastSeed = item.mediaId
         job = scope.launch {
@@ -112,11 +114,95 @@ class Autoplay(private val player: Player, private val app: NaviApp, private val
                 }
                 .ifEmpty { runCatching { app.client.randomSongs(20) }.getOrDefault(emptyList()) }
                 .filter { it.id !in have }
+                .let { app.audiobooks.withoutAudiobooks(it) }
                 .filter { app.offline.online || app.offline.isDownloaded(it.id) }
                 .take(20)
             if (similar.isEmpty() || player.hasNextMediaItem()) return@launch
             player.addMediaItems(similar.map { PlaybackService.withStream(app, it.toMediaItem(app.client)) })
         }
+    }
+}
+
+/**
+ * Hörspiele im Dienst: Position als Navidrome-Lesezeichen merken (alle 15 s, beim Pausieren und Springen,
+ * beim Kapitelwechsel), am Ende der Folge löschen; eigene Wiedergabegeschwindigkeit nur für Hörspiele.
+ */
+class AudiobookPlayback(private val player: Player, private val app: NaviApp, private val scope: CoroutineScope) : Player.Listener {
+    /** Laufendes Hörspiel-Kapitel (null = Musik). */
+    private var current: dev.navidroid.data.Song? = null
+
+    init {
+        player.addListener(this)
+        current = songOf(player.currentMediaItem)
+        applySpeed()
+        scope.launch {
+            while (isActive) {
+                delay(15_000)
+                if (player.isPlaying) save()
+            }
+        }
+    }
+
+    private fun songOf(item: MediaItem?): dev.navidroid.data.Song? {
+        val md = item?.mediaMetadata ?: return null
+        val albumId = md.extras?.getString(EXTRA_ALBUM_ID)
+        if (!app.audiobooks.isAudiobook(albumId)) return null
+        return dev.navidroid.data.Song(
+            id = item.mediaId,
+            title = md.title?.toString().orEmpty(),
+            album = md.albumTitle?.toString(),
+            albumId = albumId,
+            artist = md.artist?.toString(),
+            track = md.trackNumber,
+            duration = ((md.durationMs ?: 0L) / 1000).toInt(),
+            coverArt = md.extras?.getString(EXTRA_COVER_ART),
+        )
+    }
+
+    private fun save() {
+        val song = current ?: return
+        val pos = player.currentPosition
+        scope.launch { app.audiobooks.savePosition(song, pos) }
+    }
+
+    private fun applySpeed() {
+        val target = if (current != null) app.settings.audiobookSpeed else 1f
+        if (player.playbackParameters.speed != target) player.setPlaybackSpeed(target)
+    }
+
+    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        val prev = current
+        val next = songOf(mediaItem)
+        current = next
+        applySpeed()
+        if (prev != null && prev.albumId != next?.albumId && reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+            // Folge zu Ende gehört
+            scope.launch { app.audiobooks.clear(prev.albumId!!, prev.id) }
+        }
+        if (next != null) {
+            if (prev != null && prev.albumId == next.albumId && prev.id != next.id) {
+                scope.launch { runCatching { app.client.deleteBookmark(prev.id) } }
+            }
+            save()
+        }
+    }
+
+    override fun onPlaybackStateChanged(playbackState: Int) {
+        val song = current ?: return
+        if (playbackState == Player.STATE_ENDED) scope.launch { app.audiobooks.clear(song.albumId!!, song.id) }
+    }
+
+    override fun onIsPlayingChanged(isPlaying: Boolean) {
+        if (!isPlaying && player.playbackState != Player.STATE_ENDED) save()
+    }
+
+    override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+        if (reason == Player.DISCONTINUITY_REASON_SEEK && oldPosition.mediaItemIndex == newPosition.mediaItemIndex) save()
+    }
+
+    override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+        // In der App gewählte Geschwindigkeit merken; Musik bleibt bei 1,0
+        if (current != null) app.settings.audiobookSpeed = playbackParameters.speed else applySpeed()
     }
 }
 

@@ -136,7 +136,7 @@ private fun Modifier.bleed(horizontal: Dp) = layout { measurable, constraints ->
 
 // ---- Alben (mit Nachladen) ----
 
-class AlbumsVm(private val client: SubsonicClient) : ViewModel() {
+class AlbumsVm(private val client: SubsonicClient, private val music: suspend (List<Album>) -> List<Album> = { it }) : ViewModel() {
     var type by mutableStateOf("newest")
         private set
     val albums = mutableStateListOf<Album>()
@@ -174,7 +174,7 @@ class AlbumsVm(private val client: SubsonicClient) : ViewModel() {
             try {
                 val page = client.albumList(t, PAGE_SIZE, offset)
                 if (t == type) {
-                    albums += page.filter { seen.add(it.id) }
+                    albums += music(page).filter { seen.add(it.id) }
                     if (page.size < PAGE_SIZE) endReached = true
                 }
             } catch (e: CancellationException) {
@@ -210,7 +210,7 @@ private fun greeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_
 /** Alle Alben mit Filtern (Neu, Häufig, …) – in der Bibliothek. */
 @Composable
 private fun AlbumsBrowser(app: NaviApp, nav: NavController) {
-    val vm: AlbumsVm = viewModel { AlbumsVm(app.client) }
+    val vm: AlbumsVm = viewModel { AlbumsVm(app.client) { app.audiobooks.ensure(); app.audiobooks.albumsWithoutAudiobooks(it) } }
     val grid = rememberLazyGridState()
     val scope = rememberCoroutineScope()
     val nearEnd by remember {
@@ -261,6 +261,7 @@ private fun LibraryTab(app: NaviApp, nav: NavController) {
             if (app.helper.configured) RoundIconButton(Icons.Rounded.Add, "Eigene Dateien hochladen", { nav.navigate(Routes.UPLOAD) })
         }
         DownloadsEntry(app) { nav.navigate(Routes.DOWNLOADS) }
+        AudiobooksEntry(app) { nav.navigate(Routes.AUDIOBOOKS) }
         SegmentedControl(
             options = LibrarySection.entries.map { it to it.label },
             selected = section,
@@ -302,7 +303,10 @@ private fun DownloadsEntry(app: NaviApp, onClick: () -> Unit) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ArtistsList(app: NaviApp, nav: NavController) {
-    val loader = rememberLoad("artists") { app.client.artists() }
+    val loader = rememberLoad("artists") {
+        app.audiobooks.ensure()
+        app.client.artists().map { i -> i.copy(artist = i.artist.filterNot { app.audiobooks.isAudiobookArtist(it.id) }) }.filter { it.artist.isNotEmpty() }
+    }
     LoadContent(loader) { indexes ->
         if (indexes.isEmpty()) return@LoadContent EmptyHint("Keine Künstler gefunden")
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {

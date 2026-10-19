@@ -108,6 +108,8 @@ object Routes {
     const val TRASH = "trash"
     const val UPLOAD = "upload"
     const val OFFLINE_COLLECTION = "offline/{id}"
+    const val AUDIOBOOKS = "audiobooks"
+    const val SERIES = "audiobooks/{id}"
 }
 
 fun NavController.openAlbum(id: String) = navigate("album/$id")

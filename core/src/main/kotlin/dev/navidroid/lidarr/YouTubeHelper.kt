@@ -62,6 +62,7 @@ data class HelperHealth(
     val ai: Boolean = false,
     val manual: Boolean = false,
     val library: Boolean = false,
+    val audiobooks: Boolean = false,
 )
 
 @Serializable
@@ -197,6 +198,20 @@ data class YtChannel(val id: String = "", val name: String = "")
 
 @Serializable
 data class YtReleases(val working: Boolean = false, val channel: YtChannel? = null, val items: List<YtRelease> = emptyList())
+
+/** Hörspiel-Serie, deren neue Folgen der Helfer automatisch von YouTube lädt. */
+@Serializable
+data class AudiobookSeries(
+    val id: String,
+    val name: String = "",
+    val channel: YtChannel? = null,
+    val imported: Int = 0,
+    val lastCheck: Long? = null,
+    val lastError: String? = null,
+)
+
+@Serializable
+data class AudiobookSeriesList(val enabled: Boolean = false, val working: Boolean = false, val series: List<AudiobookSeries> = emptyList())
 
 @Serializable
 data class CoverHit(val url: String, val source: String = "", val title: String = "", val artist: String = "", val size: Int = 0)
@@ -626,6 +641,21 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
 
     suspend fun setYoutubeChannel(artist: String, channel: String): YtReleases =
         decode(send(config(), "POST", "api/youtube/channel", buildJsonObject { put("artist", artist); put("channel", channel) }.toString(), client = slowHttp))
+
+    // ---- Hörspiel-Serien ----
+
+    suspend fun audiobookSeries(): AudiobookSeriesList = decode(send(config(), "GET", "api/audiobooks"))
+
+    suspend fun addAudiobookSeries(name: String, channel: String, importExisting: Boolean): AudiobookSeries =
+        decode(send(config(), "POST", "api/audiobooks/series", buildJsonObject {
+            put("name", name); put("channel", channel); put("importExisting", importExisting)
+        }.toString(), client = slowHttp))
+
+    suspend fun removeAudiobookSeries(id: String) {
+        send(config(), "DELETE", "api/audiobooks/series/$id")
+    }
+
+    suspend fun checkAudiobookSeries(): AudiobookSeriesList = decode(send(config(), "POST", "api/audiobooks/check", "{}"))
 
     // ---- Bibliothek bearbeiten ----
 

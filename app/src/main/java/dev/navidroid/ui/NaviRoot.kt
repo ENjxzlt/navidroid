@@ -185,6 +185,8 @@ fun NaviRoot(app: NaviApp) {
             composable(Routes.QUALITY) { QualityScreen(app, nav) }
             composable(Routes.UPLOAD) { UploadScreen(app, nav) }
             composable(Routes.OFFLINE_COLLECTION) { e -> OfflineCollectionScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
+            composable(Routes.AUDIOBOOKS) { AudiobooksScreen(app, nav) }
+            composable(Routes.SERIES) { e -> SeriesScreen(app, e.arguments?.getString("id").orEmpty(), nav) }
             composable(Routes.LYRICS) { LyricsScreen(app, onClose = { nav.popBackStack() }) }
         }
     }

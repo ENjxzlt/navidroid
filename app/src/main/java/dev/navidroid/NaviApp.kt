@@ -47,6 +47,8 @@ class NaviApp : Application(), ImageLoaderFactory {
         private set
     lateinit var settingsSync: dev.navidroid.data.SettingsSync
         private set
+    lateinit var audiobooks: dev.navidroid.data.AudiobookRepository
+        private set
 
     val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -63,10 +65,16 @@ class NaviApp : Application(), ImageLoaderFactory {
         val prefs = getSharedPreferences("settings", MODE_PRIVATE)
         lyrics = LyricsRepository(http, client, filesDir, { prefs.getBoolean("lrclib", true) }, { prefs.edit().putBoolean("lrclib", it).apply() })
         covers = CoverFallback(client, http)
-        mixes = MixRepository(client, { helper.artistGenres() }) {
-            val user = session.current?.username
-            if (user != null && helper.configured) helper.historySummary(user).counts else emptyMap()
-        }
+        audiobooks = dev.navidroid.data.AudiobookRepository(this, client)
+        mixes = MixRepository(
+            client,
+            { helper.artistGenres() },
+            {
+                val user = session.current?.username
+                if (user != null && helper.configured) helper.historySummary(user).counts else emptyMap()
+            },
+            { audiobooks.ensure() },
+        )
         lidarrStore = LidarrStore(dev.navidroid.data.PrefsKeyValue(this, "lidarr"))
         lidarr = LidarrClient(http, lidarrStore)
         helperStore = HelperStore(dev.navidroid.data.PrefsKeyValue(this, "youtube_helper"))
@@ -76,6 +84,7 @@ class NaviApp : Application(), ImageLoaderFactory {
         uploads = dev.navidroid.upload.UploadManager(this)
         settingsSync = dev.navidroid.data.SettingsSync(this)
         kotlinx.coroutines.MainScope().launch { settingsSync.sync() }
+        kotlinx.coroutines.MainScope().launch { if (session.current != null) audiobooks.ensure() }
     }
 
     override fun newImageLoader(): ImageLoader =
