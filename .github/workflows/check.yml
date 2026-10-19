@@ -28,3 +28,4 @@ jobs:
           pip install -q mutagen requests
           python3 helper/tests/test_matching.py
           python3 helper/tests/test_audiobooks.py
+          python3 helper/tests/test_videos.py

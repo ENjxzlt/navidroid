@@ -1,5 +1,6 @@
 package dev.navidroid.ui
 
+import androidx.compose.material.icons.rounded.SmartDisplay
 import dev.navidroid.data.AppSettings
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -291,6 +292,19 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
                                     s.title,
                                     s.artist.orEmpty(),
                                     null,
+                                )
+                            },
+                        )
+                    }
+                    if (s.mediaId != null && videoUrl == null && app.helper.configured && !audiobook) {
+                        DropdownMenuItem(
+                            text = { Text("Musikvideo laden …") },
+                            leadingIcon = { Icon(Icons.Rounded.SmartDisplay, null) },
+                            onClick = {
+                                menu = false
+                                VideoPickBus.song = dev.navidroid.data.Song(
+                                    id = s.mediaId!!, title = s.title, artist = s.artist, album = s.album, albumId = s.albumId,
+                                    duration = (s.durationMs / 1000).toInt(),
                                 )
                             },
                         )

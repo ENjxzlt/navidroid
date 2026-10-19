@@ -36,6 +36,7 @@ from yt_dlp import YoutubeDL
 from yt_dlp.version import __version__ as YTDLP_VERSION
 
 import ai
+import videos
 import audiobooks
 import library
 import ma
@@ -45,7 +46,7 @@ import suggestions
 import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.18.0"
+VERSION = "1.19.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -199,6 +200,7 @@ STEP_LABELS = {
     "import": "In Lidarr importieren",
     "library": "In Bibliothek ablegen",
     "videos": "Musikvideos laden",
+    "videosOnly": "Musikvideos suchen & laden",
 }
 
 _jobs: dict[str, dict] = {}
@@ -563,8 +565,31 @@ def video_worker() -> None:
         job = _jobs.get(job_id)
         if not job:
             continue
+        only = bool(job.get("videoOnly"))
+        if only:
+            _update(job, status="running")
+            _update(job, "videos", state="active", done=0)
         failed = 0
+        skipped: list[dict] = []
         for i, t in enumerate(tasks, 1):
+            if only and _video_present(t["artist"], t["title"]):
+                _update(job, "videos", done=i)
+                continue
+            if not t.get("vid"):
+                # Nachladen ohne Auswahl: bestes offizielles Video suchen
+                try:
+                    pick = videos.best(_video_search(t["artist"], t["title"]), t["artist"], t["title"], t.get("seconds"))
+                except Exception as e:
+                    pick = None
+                    skipped.append({"title": t["title"], "reason": friendly_error(e)})
+                else:
+                    if pick is None:
+                        skipped.append({"title": t["title"], "reason": "Kein eindeutiges offizielles Video gefunden"})
+                if pick is None:
+                    _update(job, "videos", done=i)
+                    _update(job, skipped=list(skipped))
+                    continue
+                t = {**t, "vid": pick["videoId"]}
             target_dir = VIDEO_DIR / safe_name(t["artist"]) / safe_name(t["album"])
             target_dir.mkdir(parents=True, exist_ok=True)
             out = target_dir / f"{t['base']}.mp4"
@@ -596,8 +621,25 @@ def video_worker() -> None:
                     tmp.replace(_VIDEOS_FILE)
             else:
                 failed += 1
+                skipped.append({"title": t["title"], "reason": "Download fehlgeschlagen"})
+                if only:
+                    _update(job, skipped=list(skipped))
             _update(job, "videos", done=i)
-        _update(job, "videos", state="done" if failed < len(tasks) or not tasks else "failed")
+        ok = failed < len(tasks) or not tasks
+        _update(job, "videos", state="done" if ok else "failed")
+        if only:
+            _update(job, status="done" if ok else "failed", error=None if ok else "Kein Video konnte geladen werden",
+                    finishedAt=int(time.time() * 1000))
+
+
+def _video_present(artist: str, title: str) -> bool:
+    entry = _videos_index().get(_video_key(artist, title))
+    return bool(entry) and Path(entry["path"]).exists()
+
+
+def _video_search(artist: str, title: str) -> list[dict]:
+    q = f"{artist} {title} official video"
+    return _search_flat(f"ytsearch10:{q}", 10)
 
 
 def _download_source(video_id: str, workdir: Path) -> tuple[Path, list[dict]]:
@@ -793,7 +835,7 @@ def create_job(req: JobRequest) -> dict:
 
 
 def _public(job: dict) -> dict:
-    return {k: v for k, v in job.items() if k not in ("mapping", "url", "manual")}
+    return {k: v for k, v in job.items() if k not in ("mapping", "url", "manual", "videoTasks")}
 
 
 @app.get("/api/jobs", dependencies=[Depends(require_token)])
@@ -816,7 +858,10 @@ def retry_job(job_id: str) -> dict:
         job.update(status="queued", error=None, skipped=[], createdAt=int(time.time() * 1000))
     shutil.rmtree(STAGING / job_id, ignore_errors=True)
     _save_jobs()
-    _queue.put(job_id)
+    if job.get("videoOnly"):
+        _video_queue.put((job_id, job["videoTasks"]))
+    else:
+        _queue.put(job_id)
     return _public(job)
 
 
@@ -1990,6 +2035,78 @@ def find_video(artist: str = Query(...), title: str = Query(...)) -> dict:
     if not entry or not Path(entry["path"]).exists():
         raise HTTPException(404, "Kein Video vorhanden")
     return {"id": _video_id(key), "url": f"/api/videos/{_video_id(key)}"}
+
+
+class VideoSong(BaseModel):
+    artist: str
+    title: str
+    album: str = ""
+    track: int = 0
+    seconds: float | None = None
+    videoId: str | None = None  # gewähltes Video; leer = automatisch suchen
+
+
+class VideoStatusRequest(BaseModel):
+    items: list[VideoSong]
+
+
+@app.post("/api/videos/status", dependencies=[Depends(require_token)])
+def videos_status(req: VideoStatusRequest) -> dict:
+    """Welche der Titel schon ein Musikvideo haben (gleiche Reihenfolge)."""
+    index = _videos_index()
+    have = []
+    for i in req.items:
+        e = index.get(_video_key(i.artist, i.title))
+        have.append(bool(e) and Path(e["path"]).exists())
+    return {"have": have}
+
+
+@app.post("/api/videos/candidates", dependencies=[Depends(require_token)])
+def video_candidates(req: VideoSong) -> list[dict]:
+    try:
+        entries = _video_search(req.artist, req.title)
+    except Exception as e:
+        raise HTTPException(502, f"YouTube-Suche fehlgeschlagen: {friendly_error(e)}") from e
+    return videos.rank(entries, req.artist, req.title, req.seconds)
+
+
+class VideoFetchRequest(BaseModel):
+    title: str = ""  # Name des Auftrags, z. B. Albumtitel
+    items: list[VideoSong]
+
+
+@app.post("/api/videos/fetch", dependencies=[Depends(require_token)])
+def video_fetch(req: VideoFetchRequest) -> dict:
+    """Musikvideos für vorhandene Titel nachladen (eigener Auftrag unter Downloads)."""
+    if not req.items:
+        raise HTTPException(400, "Keine Titel ausgewählt")
+    tasks = [{
+        "artist": i.artist, "album": i.album or "Musikvideos", "title": i.title, "seconds": i.seconds,
+        "base": f"{i.track:02d} - {safe_name(i.title)}" if i.track else safe_name(i.title),
+        "vid": i.videoId,
+    } for i in req.items]
+    artists = list(dict.fromkeys(i.artist for i in req.items))
+    job = {
+        "id": uuid.uuid4().hex[:12],
+        "url": "",
+        "albumId": 0,
+        "title": req.title or (req.items[0].title if len(req.items) == 1 else f"{len(req.items)} Musikvideos"),
+        "artist": " & ".join(artists[:2]) + (" u. a." if len(artists) > 2 else ""),
+        "videos": True,
+        "videoOnly": True,
+        "videoTasks": tasks,
+        "mapping": [],
+        "steps": [{"key": "videos", "label": STEP_LABELS["videosOnly"], "done": 0, "total": len(tasks), "state": "todo"}],
+        "status": "queued",
+        "error": None,
+        "skipped": [],
+        "createdAt": int(time.time() * 1000),
+    }
+    with _lock:
+        _jobs[job["id"]] = job
+    _save_jobs()
+    _video_queue.put((job["id"], tasks))
+    return _public(job)
 
 
 @app.get("/api/videos/{video_id}", dependencies=[Depends(require_token)])
