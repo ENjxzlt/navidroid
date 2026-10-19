@@ -371,16 +371,13 @@ fun PlayerScreen(onClose: () -> Unit, onOpenLyrics: () -> Unit, onOpenAlbum: (St
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BottomPill(Icons.Rounded.Lyrics, "Songtext", onOpenLyrics, Modifier.weight(1f))
             BottomPill(Icons.AutoMirrored.Rounded.QueueMusic, "Warteschlange", { showQueue = true }, Modifier.weight(1f))
-            Surface(
-                onClick = { DeviceBus.open = true },
-                shape = RoundedCornerShape(16.dp),
-                color = if (s.remote != null) accent else Color.White.copy(alpha = 0.08f),
-                modifier = Modifier.size(56.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Rounded.Devices, "Geräte", tint = if (s.remote != null) MaterialTheme.colorScheme.onPrimary else Color.White)
-                }
-            }
+            BottomPill(
+                Icons.Rounded.Devices,
+                "Geräte",
+                { DeviceBus.open = true },
+                Modifier.weight(1f),
+                active = s.remote != null,
+            )
         }
         if (s.remote != null) {
             Text(
@@ -422,24 +419,17 @@ private fun SongVideoToggle(video: Boolean, tint: Color, soft: Color, onChange: 
     }
 }
 
+/** Knopf unter dem Player: nur Symbol, die Beschriftung ist die Bedienhilfe. [active] = Akzentfarbe. */
 @Composable
-private fun BottomPill(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier) {
-    val full = MaterialTheme.typography.labelLarge.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize)
-    // Immer einzeilig: passt das Wort nicht (schmales Handy, große Systemschrift), wird die Schrift kleiner statt umzubrechen.
-    var style by remember(label, full) { mutableStateOf(full) }
-    Surface(onClick = onClick, shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = 0.08f), modifier = modifier.height(56.dp)) {
-        Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = Color.White)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                label,
-                style = style,
-                color = Color.White,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-                onTextLayout = { if (it.hasVisualOverflow && style.fontSize.value > 11f) style = style.copy(fontSize = style.fontSize * 0.92f) },
-            )
+private fun BottomPill(icon: ImageVector, label: String, onClick: () -> Unit, modifier: Modifier, active: Boolean = false) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = if (active) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f),
+        modifier = modifier.height(56.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, label, tint = if (active) MaterialTheme.colorScheme.onPrimary else Color.White)
         }
     }
 }
