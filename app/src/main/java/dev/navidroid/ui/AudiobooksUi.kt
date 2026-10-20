@@ -267,6 +267,12 @@ fun AudiobooksScreen(app: NaviApp, nav: NavController) {
                 }
             }
         }
+        if (app.helper.configured) item {
+            TextButton(onClick = { app.uploads.useAudiobook(true); nav.navigate(Routes.UPLOAD) }, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Icon(Icons.Rounded.Add, null)
+                Text("Eigene Folgen hochladen", modifier = Modifier.padding(start = 6.dp))
+            }
+        }
         if (app.helper.configured) item { YouTubeSeriesSection(app) }
     }
 }

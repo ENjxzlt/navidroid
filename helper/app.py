@@ -46,7 +46,7 @@ import suggestions
 import youtube_releases as ytr
 from matching import clean_title, is_youtube_url, match, normalize, safe_name
 
-VERSION = "1.19.0"
+VERSION = "1.20.0"
 
 TOKEN = os.environ.get("HELPER_TOKEN", "")
 LIDARR_URL = os.environ.get("LIDARR_URL", "").rstrip("/")
@@ -1918,14 +1918,21 @@ async def library_upload(
     year: int | None = Query(None),
     genre: str | None = Query(None),
     trackArtist: str | None = Query(None),
+    root: str = Query("music"),  # "audiobook" = Hörspiel-Ordner
 ) -> dict:
-    index = _need_library()
     ext = Path(filename).suffix.lower()
     if ext not in library.AUDIO:
         raise HTTPException(400, f"Dateityp {ext or '?'} wird nicht unterstützt")
-    target = library.upload_target(MUSIC_DIR, artist, album, year, track, disc, title, ext, discs)
-    if library.already_there(index, target, artist, album, title):
-        return {"status": "exists"}
+    if root == "audiobook":
+        target = library.upload_target(_need_audiobooks(), artist, album, year, track, disc, title, ext, discs)
+        if target.exists():
+            return {"status": "exists"}
+        genre = genre or "Hörspiel"
+    else:
+        index = _need_library()
+        target = library.upload_target(MUSIC_DIR, artist, album, year, track, disc, title, ext, discs)
+        if library.already_there(index, target, artist, album, title):
+            return {"status": "exists"}
     target.parent.mkdir(parents=True, exist_ok=True)
     part = target.with_name("." + target.name + ".part")
     size = 0
@@ -1953,15 +1960,26 @@ async def library_upload(
 
 
 @app.post("/api/library/upload/cover", dependencies=[Depends(require_token)])
-async def library_upload_cover(request: Request, artist: str = Query(...), album: str = Query(...), year: int | None = Query(None)) -> dict:
+async def library_upload_cover(request: Request, artist: str = Query(...), album: str = Query(...), year: int | None = Query(None),
+                               root: str = Query("music")) -> dict:
     image = await request.body()
     if not image or len(image) > 15 * 1024 * 1024:
         raise HTTPException(400, "Kein oder zu großes Bild")
     mime = "image/png" if image[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
-    folder = library.upload_target(MUSIC_DIR, artist, album, year, 1, 1, "x", ".mp3").parent if MUSIC_DIR else None
+    base = _need_audiobooks() if root == "audiobook" else MUSIC_DIR
+    folder = library.upload_target(base, artist, album, year, 1, 1, "x", ".mp3").parent if base else None
     if folder is None or not folder.exists():
         raise HTTPException(404, "Album-Ordner noch nicht vorhanden – zuerst die Titel hochladen")
     files = [{"path": str(p)} for p in folder.iterdir() if p.suffix.lower() in library.AUDIO and not p.name.startswith(".")]
+    if root == "audiobook":
+        # Eigener Ordner je Folge: Cover-Datei daneben und in jede Datei
+        (folder / ("cover.png" if mime == "image/png" else "cover.jpg")).write_bytes(image)
+        for f in files:
+            try:
+                library.embed_cover(f["path"], image, mime)
+            except Exception as e:
+                log.warning("Cover für %s nicht eingebettet: %s", f["path"], e)
+        return {"tracks": len(files)}
     with _library_lock:
         library.set_cover(_need_library(), files, image, mime)
     return {"tracks": len(files)}

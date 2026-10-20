@@ -26,6 +26,8 @@ class EpisodeNumber(unittest.TestCase):
         self.assertEqual(ab.episode_number("Nr. 7 – Der Super-Papagei"), 7)
         self.assertIsNone(ab.episode_number("Adventskalender 2023"))
         self.assertIsNone(ab.episode_number("und der Super-Papagei"))
+        # Ordnername nach safe_name („:“ → „_“)
+        self.assertEqual(ab.episode_number("Folge 12_ und der Karpatenhund"), 12)
 
 
 class Releases(unittest.TestCase):

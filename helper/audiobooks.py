@@ -17,7 +17,8 @@ import youtube_releases as ytr
 Extract = Callable[[str, dict], dict]
 
 # „Folge 230: …“, „230/und der …“, „Nr. 12 – …“; Jahreszahlen (vierstellig) zählen nicht als Folge
-_NUMBER = re.compile(r"^\D{0,20}?\b(\d{1,3})\b(?!\d)")
+# Ziffern statt \b abgrenzen: In Ordnernamen wird aus „Folge 12:“ „Folge 12_“, und _ zählt als Wortzeichen
+_NUMBER = re.compile(r"^\D{0,20}?(?<!\d)(\d{1,3})(?!\d)")
 _YEAR_SUFFIX = re.compile(r"\s*\((19|20)\d{2}\)\s*$")
 
 

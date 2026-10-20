@@ -787,10 +787,10 @@ class HelperClient(http: OkHttpClient, private val store: HelperStore) {
     suspend fun upload(query: Map<String, String>, body: okhttp3.RequestBody): UploadResult =
         decode(send(config(), "POST", "api/library/upload", query = query, client = uploadHttp, raw = body))
 
-    suspend fun uploadCover(artist: String, album: String, year: Int?, image: ByteArray, mime: String) {
+    suspend fun uploadCover(artist: String, album: String, year: Int?, image: ByteArray, mime: String, root: String = "music") {
         send(
             config(), "POST", "api/library/upload/cover",
-            query = buildMap { put("artist", artist); put("album", album); year?.let { put("year", "$it") } },
+            query = buildMap { put("artist", artist); put("album", album); year?.let { put("year", "$it") }; put("root", root) },
             client = slowHttp,
             raw = image.toRequestBody(mime.toMediaType()),
         )

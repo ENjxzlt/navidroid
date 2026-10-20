@@ -50,6 +50,8 @@ class UploadAlbum(artist: String, album: String, year: String, cover: ByteArray?
     var album by mutableStateOf(album)
     var year by mutableStateOf(year)
     var cover by mutableStateOf(cover)
+    /** Nur Hörspiele: Folgennummer (der Albumname wird dann „Folge N: Titel“). */
+    var episode by mutableStateOf("")
     val files = mutableStateListOf<UploadFile>()
     val discs get() = files.maxOfOrNull { it.disc } ?: 1
 }
@@ -70,6 +72,30 @@ class UploadManager(private val app: NaviApp) {
         private set
     var finished by mutableStateOf(false)
         private set
+
+    /** Ziel: Hörspiel-Bibliothek (Helfer: AUDIOBOOK_DIR) statt Musikordner. */
+    var audiobook by mutableStateOf(false)
+        private set
+
+    fun useAudiobook(on: Boolean) {
+        if (running) return
+        audiobook = on
+        if (on) albums.forEach { prefillEpisode(it) }
+    }
+
+    /** Folgennummer aus dem Albumnamen übernehmen („Folge 12: und der …“). */
+    private fun prefillEpisode(a: UploadAlbum) {
+        if (a.episode.isNotBlank()) return
+        val n = dev.navidroid.data.AudiobookRepository.episodeNumber(a.album) ?: return
+        a.episode = "$n"
+        a.album = dev.navidroid.data.AudiobookRepository.withoutEpisodeNumber(a.album)
+    }
+
+    private fun albumName(a: UploadAlbum): String {
+        val title = a.album.trim().ifEmpty { "Unbekannt" }
+        val n = a.episode.trim().toIntOrNull()
+        return if (audiobook && n != null) "Folge $n: $title" else title
+    }
 
     val files get() = albums.flatMap { it.files }
     val totalBytes get() = files.sumOf { it.size.coerceAtLeast(0) }
@@ -95,6 +121,7 @@ class UploadManager(private val app: NaviApp) {
                 sorted.forEach { f -> if (f.track <= 0) f.track = next; next = f.track + 1 }
                 a.files.clear()
                 a.files += sorted
+                if (audiobook) prefillEpisode(a)
             }
             reading = false
         }
@@ -138,7 +165,9 @@ class UploadManager(private val app: NaviApp) {
                     }
                     val cover = album.cover
                     if (anyOk && cover != null) {
-                        runCatching { app.helper.uploadCover(album.artist.trim(), album.album.trim(), album.year.toIntOrNull(), cover, "image/jpeg") }
+                        runCatching {
+                            app.helper.uploadCover(album.artist.trim(), albumName(album), album.year.toIntOrNull(), cover, "image/jpeg", if (audiobook) "audiobook" else "music")
+                        }
                     }
                 }
                 dev.navidroid.ui.rescanLibrary(app)
@@ -156,13 +185,14 @@ class UploadManager(private val app: NaviApp) {
     private fun query(a: UploadAlbum, f: UploadFile) = buildMap {
         put("filename", f.fileName)
         put("artist", a.artist.trim().ifEmpty { "Unbekannt" })
-        put("album", a.album.trim().ifEmpty { "Unbekannt" })
+        put("album", albumName(a))
         put("title", f.title.trim().ifEmpty { f.fileName.substringBeforeLast('.') })
         put("track", "${f.track}")
         put("disc", "${f.disc}")
         put("discs", "${a.discs}")
         a.year.trim().toIntOrNull()?.let { put("year", "$it") }
-        f.genre?.takeIf { it.isNotBlank() }?.let { put("genre", it) }
+        if (audiobook) put("root", "audiobook") // Genre setzt der Helfer auf „Hörspiel“
+        else f.genre?.takeIf { it.isNotBlank() }?.let { put("genre", it) }
         f.trackArtist?.takeIf { it.isNotBlank() && !it.equals(a.artist.trim(), ignoreCase = true) }?.let { put("trackArtist", it) }
     }
 

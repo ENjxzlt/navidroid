@@ -93,6 +93,14 @@ fun UploadScreen(app: NaviApp, nav: NavController) {
             if (!busy && up.files.isNotEmpty()) OutlinedButton(onClick = pick) { Text("+ Dateien") }
             if (up.finished) TextButton(onClick = { up.clear() }) { Text("Neu") }
         }
+        if (!busy) {
+            SegmentedControl(
+                options = listOf(false to "Musik", true to "Hörspiel"),
+                selected = up.audiobook,
+                onSelect = { up.useAudiobook(it) },
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+            )
+        }
 
         when {
             up.files.isEmpty() && !up.reading -> Column(
@@ -101,9 +109,14 @@ fun UploadScreen(app: NaviApp, nav: NavController) {
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Icon(Icons.Rounded.LibraryMusic, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
-                Text("Eigene Musik hinzufügen", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 16.dp))
+                Text(if (up.audiobook) "Eigene Hörspiele hinzufügen" else "Eigene Musik hinzufügen", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 16.dp))
                 Text(
-                    "Wähle MP3-, FLAC-, M4A- oder andere Audiodateien. Die App liest die Tags und ordnet sie nach Album; du kannst alles vor dem Hochladen prüfen.",
+                    if (up.audiobook) {
+                        "Wähle die Dateien deiner gekauften oder selbst gerippten Folgen. Je Folge gibst du Serie, Nummer und Titel an; " +
+                            "sie landen in der Hörspiel-Bibliothek und erscheinen sortiert in der Übersicht."
+                    } else {
+                        "Wähle MP3-, FLAC-, M4A- oder andere Audiodateien. Die App liest die Tags und ordnet sie nach Album; du kannst alles vor dem Hochladen prüfen."
+                    },
                     color = Navi.Muted,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(top = 8.dp, bottom = 20.dp),
@@ -149,18 +162,41 @@ private fun AlbumCard(app: NaviApp, a: UploadAlbum) {
                 else Text("+ BILD", style = MaterialTheme.typography.labelSmall, color = Navi.Muted)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                OutlinedTextField(a.album, { a.album = it }, label = { Text("Album") }, singleLine = true, isError = a.album.isBlank(), modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    a.album, { a.album = it },
+                    label = { Text(if (app.uploads.audiobook) "Titel der Folge" else "Album") },
+                    singleLine = true,
+                    isError = a.album.isBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(a.artist, { a.artist = it }, label = { Text("Künstler") }, singleLine = true, isError = a.artist.isBlank(), modifier = Modifier.weight(1f))
+            val audiobook = app.uploads.audiobook
             OutlinedTextField(
-                a.year, { a.year = it.filter(Char::isDigit).take(4) },
-                label = { Text("Jahr") },
+                a.artist, { a.artist = it },
+                label = { Text(if (audiobook) "Serie" else "Künstler") },
                 singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.width(92.dp),
+                isError = a.artist.isBlank(),
+                modifier = Modifier.weight(1f),
             )
+            if (audiobook) {
+                OutlinedTextField(
+                    a.episode, { a.episode = it.filter(Char::isDigit).take(3) },
+                    label = { Text("Folge") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.width(92.dp),
+                )
+            } else {
+                OutlinedTextField(
+                    a.year, { a.year = it.filter(Char::isDigit).take(4) },
+                    label = { Text("Jahr") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.width(92.dp),
+                )
+            }
         }
         a.files.forEach { f ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
