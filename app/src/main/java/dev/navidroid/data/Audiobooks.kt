@@ -115,7 +115,14 @@ class AudiobookRepository(context: Context, private val client: SubsonicClient) 
         private val NAME = Regex("h(ö|oe)r(spiel|buch|bücher|buecher)|audio ?books?", RegexOption.IGNORE_CASE)
 
         /** Folgennummer aus dem Albumnamen („Folge 230: …“, „012/und der …“). */
-        fun episodeNumber(name: String): Int? = Regex("""^\D{0,20}?\b(\d{1,3})\b(?!\d)""").find(name)?.groupValues?.get(1)?.toIntOrNull()
+        fun episodeNumber(name: String): Int? = EPISODE.find(name)?.groupValues?.get(1)?.toIntOrNull()
+
+        /** Albumname ohne vorangestellte Folgennummer („Folge 12: und der …“ → „und der …“). */
+        fun withoutEpisodeNumber(name: String): String =
+            Regex("""^\D{0,20}?(?<!\d)\d{1,3}(?!\d)\s*[:./_\-–]*\s*""").replaceFirst(name, "").ifBlank { name }
+
+        // Ziffern statt \b abgrenzen – in Ordnernamen wird aus „Folge 12:“ „Folge 12_“ (wie im Helfer)
+        private val EPISODE = Regex("""^\D{0,20}?(?<!\d)(\d{1,3})(?!\d)""")
 
         /** Fortschritt einer Folge (0..1) aus Lesezeichen und Albumlänge (Kapitel als gleich lang geschätzt). */
         fun progress(album: Album, b: Bookmark): Float {
